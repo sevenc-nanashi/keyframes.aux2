@@ -1,0 +1,3 @@
+[tools]
+"github:karoterra/aviutl2-aulua" = "latest"
+"github:sevenc-nanashi/aviutl2-cli" = "0.9.0-preview.0"
