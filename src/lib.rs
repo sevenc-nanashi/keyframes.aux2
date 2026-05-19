@@ -7,12 +7,16 @@ mod module;
 #[aviutl2::plugin(GenericPlugin)]
 struct KeyframesAux2 {
     mod2: aviutl2::generic::SubPlugin<crate::module::KeyframesMod2>,
+    gui: aviutl2_eframe::EframeWindow,
 
     current_bank: usize,
     keyframes: std::collections::HashMap<(usize, usize), crate::curve::Keyframes>,
 }
 
-static EDIT_HANDLE: aviutl2::generic::GlobalEditHandle = aviutl2::generic::GlobalEditHandle::new();
+pub static EFFECTS: std::sync::LazyLock<dashmap::DashMap<String, aviutl2::generic::Effect>> =
+    std::sync::LazyLock::new(|| dashmap::DashMap::new());
+pub static EDIT_HANDLE: aviutl2::generic::GlobalEditHandle =
+    aviutl2::generic::GlobalEditHandle::new();
 
 impl aviutl2::generic::GenericPlugin for KeyframesAux2 {
     fn new(info: aviutl2::common::AviUtl2Info) -> aviutl2::common::AnyResult<Self> {
@@ -27,6 +31,7 @@ impl aviutl2::generic::GenericPlugin for KeyframesAux2 {
             .init();
         Ok(Self {
             mod2: aviutl2::generic::SubPlugin::new_script_module(&info)?,
+            gui: aviutl2_eframe::EframeWindow::new("keyframes.aux2", crate::gui::create_gui)?,
 
             current_bank: 0,
             keyframes: std::collections::HashMap::new(),
@@ -42,10 +47,30 @@ impl aviutl2::generic::GenericPlugin for KeyframesAux2 {
 
     fn register(&mut self, registry: &mut aviutl2::generic::HostAppHandle) {
         registry.register_script_module(Some("keyframes.aux2"), &self.mod2);
-        EDIT_HANDLE.init(registry.create_edit_handle());
+        let handle = registry.create_edit_handle();
+        let window = handle.get_host_app_window_raw().unwrap();
+        if let Ok(handle) = self.gui.handle() {
+            self.gui.egui_ctx().unwrap().set_pixels_per_point(unsafe {
+                windows::Win32::UI::HiDpi::GetDpiForWindow(windows::Win32::Foundation::HWND(
+                    window.hwnd.get() as *mut std::ffi::c_void,
+                )) as f32
+                    / 96.0
+            });
+            let _ = registry.register_window_client("keyframes.aux2", &handle);
+        }
+        EDIT_HANDLE.init(handle);
     }
 
     fn on_project_load(&mut self, project: &mut aviutl2::generic::ProjectFile) {
+        if EFFECTS.is_empty() {
+            tracing::info!("Loading effects...");
+            let effects = EDIT_HANDLE.get_effects();
+            for effect in effects {
+                EFFECTS.insert(effect.name.clone(), effect);
+            }
+            tracing::info!("Loaded {} effects", EFFECTS.len());
+        }
+
         let last_bank_id: usize = project.deserialize("last_bank_id").unwrap_or(0);
         self.current_bank = last_bank_id + 1;
         let keyframes: std::collections::HashMap<(usize, usize), crate::curve::Keyframes> =
@@ -73,9 +98,19 @@ impl aviutl2::generic::GenericPlugin for KeyframesAux2 {
         }
         tracing::info!("Used bank IDs: {:?}", used_bank_ids);
         tracing::info!("Used keyframes: {:?}", used_keyframes);
+        let before_len = self.keyframes.len();
+        self.keyframes.retain(|(bank_id, keyframes_id), _| {
+            !used_bank_ids.contains(bank_id) || used_keyframes.contains(&(*bank_id, *keyframes_id))
+        });
+        tracing::info!(
+            "Removed {} unused keyframes",
+            before_len - self.keyframes.len()
+        );
     }
 }
 
+pub static KEYFRAME_PATTERN: lazy_regex::Lazy<lazy_regex::regex::Regex> =
+    lazy_regex::lazy_regex!(r"keyframes\.aux2,\d+\|(?<bank_id>\d+),(?<keyframes_id>\d+)(?:$|\|)");
 fn collect_used_keyframes(
     edit: &aviutl2::generic::EditSection,
     object: aviutl2::generic::ObjectHandle,
@@ -90,10 +125,7 @@ fn collect_used_keyframes(
         .context("Failed to get Object table")?;
     for object in objects.iter_subtables_as_array() {
         for (_key, value) in object.values() {
-            static PATTERN: lazy_regex::Lazy<lazy_regex::regex::Regex> = lazy_regex::lazy_regex!(
-                r"keyframes\.aux2,\d+\|(?<bank_id>\d+),(?<keyframes_id>\d+)(?:$|\|)"
-            );
-            if let Some(captures) = PATTERN.captures(value) {
+            if let Some(captures) = KEYFRAME_PATTERN.captures(value) {
                 let bank_id: usize = captures
                     .name("bank_id")
                     .context("Failed to capture bank_id")?

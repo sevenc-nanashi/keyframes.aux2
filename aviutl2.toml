@@ -1,3 +1,5 @@
+#:schema ./.aviutl2-cli/aviutl2.schema.json
+
 [project]
 id = "sevenc-nanashi.keyframes-aux2"
 name = "keyframes.aux2"
@@ -21,3 +23,4 @@ build = "aulua build"
 
 [development]
 aviutl2_version = "latest"
+catalog_dependencies = ["KuroNeko.CopyAlias"]

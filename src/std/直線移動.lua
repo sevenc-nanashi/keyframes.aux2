@@ -1,5 +1,4 @@
---param:Bank ID,0
---param:Track ID,0
+--speed:0,0
 
 local num = obj.getpoint("num")
 local index, ratio = math.modf(obj.getpoint("index"))
