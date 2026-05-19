@@ -11,6 +11,8 @@ anyhow = "1.0.102"
 aviutl2 = { version = "0.29.0", features = ["serde"] }
 aviutl2-eframe = "0.29.0"
 dashmap = "6.2.1"
+encoding_rs = "0.8.35"
+include_dir = "0.7.4"
 indexmap = "2.14.0"
 lazy-regex = "3.6.0"
 serde = { version = "1.0.228", features = ["derive"] }

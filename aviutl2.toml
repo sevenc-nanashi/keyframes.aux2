@@ -23,4 +23,4 @@ build = "aulua build"
 
 [development]
 aviutl2_version = "latest"
-catalog_dependencies = ["KuroNeko.CopyAlias"]
+catalog_dependencies = ["KuroNeko.CopyAlias", "sigma-axis.Basic_S"]

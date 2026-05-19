@@ -19,6 +19,7 @@ pub enum EffectType {
 
 #[derive(Debug, Clone)]
 pub struct SelectedObjectInfo {
+    handle: aviutl2::generic::ObjectHandle,
     name: String,
     frames: Vec<usize>,
     effects: Vec<EffectInfo>,
@@ -27,6 +28,7 @@ pub struct SelectedObjectInfo {
 #[derive(Debug, Clone)]
 pub struct EffectInfo {
     name: String,
+    index: usize,
     effect_type: EffectType,
     keyframe_tracks: indexmap::IndexMap<crate::KeyframeTrackParams, KeyframeTrackInfo>,
 }
@@ -337,7 +339,9 @@ impl KeyframesGui {
     ) {
         ui.collapsing(format!("Effect: {}", effect.name), |ui| {
             for (params, track) in &effect.keyframe_tracks {
-                self.render_keyframe_track_info(ui, info, object, effect, params, track);
+                ui.push_id(params, |ui| {
+                    self.render_keyframe_track_info(ui, info, object, effect, params, track);
+                });
             }
         });
     }
@@ -390,27 +394,86 @@ impl KeyframesGui {
                 sections.push((i, left_position, right_position));
             }
             // ホバーしているセクションの強調表示
-            let hovered_section = response.hover_pos().and_then(|hover_pos| {
-                sections
-                    .into_iter()
-                    .find(|(i, left_position, right_position)| {
-                        let section_left =
-                            response.rect.left() + left_position * response.rect.width();
-                        let section_right =
-                            response.rect.left() + right_position * response.rect.width();
-                        hover_pos.x >= section_left && hover_pos.x <= section_right
-                    })
-            });
-            if let Some(hovered_section) = hovered_section {
+            for section in sections {
                 let mut rect = response.rect;
-                let left_position =
-                    response.rect.left() + hovered_section.1 * response.rect.width();
-                let right_position =
-                    response.rect.left() + hovered_section.2 * response.rect.width();
+                let left_position = response.rect.left() + section.1 * response.rect.width();
+                let right_position = response.rect.left() + section.2 * response.rect.width();
                 rect.set_left(left_position);
                 rect.set_right(right_position);
-                painter.rect_filled(rect, 0.0, selected_object_color);
+                let response = ui.interact(
+                    rect,
+                    ui.id().with(section.0),
+                    aviutl2_eframe::egui::Sense::click(),
+                );
+                if response.hovered() {
+                    painter.rect_filled(rect, 0.0, selected_object_color);
+                }
+                egui::containers::Popup::menu(&response).show(|ui| {
+                    self.show_easing_menu(ui, &keyframes, params, section.0, "", |new_keyframes| {
+                        tracing::info!(
+                            "Updating keyframe {:?} of track {:?} in effect {:?} to {:?}",
+                            section.0,
+                            track.names,
+                            effect.name,
+                            &new_keyframes
+                        );
+                        let new_params = crate::KeyframeTrackParams::new();
+                        crate::KEYFRAMES.insert(new_params, new_keyframes);
+                        let edit_result = crate::EDIT_HANDLE
+                            .call_edit_section(|edit| {
+                                for name in &track.names {
+                                    let mut before = edit.get_object_effect_item(
+                                        object.handle,
+                                        &effect.name,
+                                        effect.index,
+                                        name,
+                                    )?;
+                                    new_params.set_params(&mut before)?;
+                                    edit.set_object_effect_item(
+                                        object.handle,
+                                        &effect.name,
+                                        effect.index,
+                                        name,
+                                        &before,
+                                    )?;
+                                }
+                                anyhow::Ok(())
+                            })
+                            .map_err(anyhow::Error::from)
+                            .flatten();
+                        match edit_result {
+                            Ok(()) => {
+                                tracing::info!(
+                                    "Updated keyframe track params for section {} of track {:?} in effect {:?} to {:?}",
+                                    section.0,
+                                    track.names,
+                                    effect.name,
+                                    new_params
+                                );
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to update keyframe track params for section {} of track {:?} in effect {:?}: {:?}",
+                                    section.0,
+                                    track.names,
+                                    effect.name,
+                                    e
+                                );
+                            }
+                            }
+                    });
+                });
             }
+            // if let Some(hovered_section) = hovered_section {
+            //     let mut rect = response.rect;
+            //     let left_position =
+            //         response.rect.left() + hovered_section.1 * response.rect.width();
+            //     let right_position =
+            //         response.rect.left() + hovered_section.2 * response.rect.width();
+            //     rect.set_left(left_position);
+            //     rect.set_right(right_position);
+            //     painter.rect_filled(rect, 0.0, selected_object_color);
+            // }
 
             // 現在のイージング
             for (i, frame) in object.frames.iter().enumerate() {
@@ -482,6 +545,83 @@ impl KeyframesGui {
         }
     }
 
+    fn show_easing_menu(
+        &self,
+        ui: &mut egui::Ui,
+        keyframes: &crate::curve::Keyframes,
+        _params: &crate::KeyframeTrackParams,
+        index: usize,
+        current_level: &str,
+        update_keyframe: impl FnOnce(crate::curve::Keyframes),
+    ) {
+        let default = indexmap::IndexMap::new();
+        let easings = crate::EASINGS.get().unwrap_or(&default);
+        let mut update_keyframe_once = Some(update_keyframe);
+        let mut update_keyframe = |new_keyframes: crate::curve::Keyframes| {
+            if let Some(f) = update_keyframe_once.take() {
+                f(new_keyframes);
+            }
+        };
+
+        let default_keyframe = crate::curve::Keyframe::default();
+        let (keyframe_index, current_keyframe) = &keyframes
+            .keyframes
+            .iter()
+            .enumerate()
+            .take(index + 1)
+            .rfind(|(_, k)| k.easing.is_some())
+            .unwrap_or((0, &default_keyframe));
+        let keyframe_index = *keyframe_index;
+        let current_easing =
+            easings.get(current_keyframe.easing.as_ref().unwrap_or(&"".to_string()));
+
+        // TODO: ちゃんとlabelごとに階層にする
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            if current_level.is_empty() && index > 0 {
+                if ui.button("引き継ぎ").clicked() {
+                    let mut new_keyframes = keyframes.clone();
+                    new_keyframes.keyframes[index].easing = None;
+                    update_keyframe(new_keyframes);
+                }
+                ui.separator();
+            }
+            if let Some(current_easing) = current_easing {
+                if current_easing.has_speed {
+                    let mut current_acceleration = current_keyframe.acceleration;
+                    if ui.checkbox(&mut current_acceleration, "加速").changed() {
+                        let mut new_keyframes = keyframes.clone();
+                        new_keyframes.keyframes[keyframe_index].acceleration = current_acceleration;
+                        update_keyframe(new_keyframes);
+                    }
+                    let mut current_deceleration = current_keyframe.deceleration;
+                    if ui.checkbox(&mut current_deceleration, "減速").changed() {
+                        let mut new_keyframes = keyframes.clone();
+                        new_keyframes.keyframes[keyframe_index].deceleration = current_deceleration;
+                        update_keyframe(new_keyframes);
+                    }
+                }
+                if current_easing.has_timecontrol
+                    && ui.button("時間制御").clicked() {
+                        tracing::warn!("Unimplemented: Opening time control dialog for section {} of track {:?} in effect {:?}",
+                            index,
+                            current_easing.name,
+                            current_level
+                        );
+                }
+                ui.separator();
+            }
+            for easing in easings.values() {
+                if ui.button(&easing.name).clicked() {
+                    let mut new_keyframes = keyframes.clone();
+                    new_keyframes.keyframes[index].easing = Some(easing.name.clone());
+                    new_keyframes.keyframes[index].acceleration = easing.default_acceleration;
+                    new_keyframes.keyframes[index].deceleration = easing.default_deceleration;
+                    update_keyframe(new_keyframes);
+                }
+            }
+        });
+    }
+
     fn update_selected_object_info(
         &mut self,
         read: &aviutl2::generic::ReadSection,
@@ -508,6 +648,7 @@ impl KeyframesGui {
             .context("Failed to get effect info")?;
         let first_effect_type = Self::determine_effect_type(&first_effect_info, None);
         let mut effects = Vec::new();
+        let mut effect_count = std::collections::HashMap::<String, usize>::new();
         for object in objects.iter_subtables_as_array() {
             let effect_name = object
                 .get_value("effect.name")
@@ -517,10 +658,14 @@ impl KeyframesGui {
                 .get(effect_name)
                 .context("Failed to get effect info")?;
             let effect_type = Self::determine_effect_type(&effect_info, Some(first_effect_type));
+            let effect_index = effect_count.entry(effect_name.to_string()).or_insert(0);
+            *effect_index += 1;
+            let effect_index = *effect_index - 1;
 
             let mut effect_info = EffectInfo {
                 name: effect_name.to_string(),
                 effect_type,
+                index: effect_index,
                 keyframe_tracks: indexmap::IndexMap::new(),
             };
             crate::EDIT_HANDLE.enumerate_effect_items(effect_name, |item| {
@@ -561,6 +706,7 @@ impl KeyframesGui {
             .filter_map(|s| s.parse::<usize>().ok())
             .collect::<Vec<_>>();
         let selected_object_info = SelectedObjectInfo {
+            handle: selected_object,
             name: read.get_object_name(selected_object)?.unwrap_or_else(|| {
                 effects
                     .iter()

@@ -1,28 +1,54 @@
---param:Bank ID,0
---param:Track ID,0
+--param:Bank ID (Do not edit manually),0
+--param:Keyframe ID (Do not edit manually),0
 
-local num = obj.getpoint("num")
+local mod = obj.module("keyframes.aux2")
+local bank_id, keyframe_id = obj.getpoint("param")
 local index, ratio = math.modf(obj.getpoint("index"))
-local st = obj.getpoint(index)
-local ed = obj.getpoint(index + 1)
 
-local accelerate = obj.getpoint("accelerate")
-local decelerate = obj.getpoint("decelerate")
+local starts_at, ends_at, script_name, script, accelerate, decelerate = mod.get_keyframe(bank_id, keyframe_id, index)
 
-local function single_ease_in(t)
-  return 1.5 * t * t - 0.5 * t * t * t
-end
+local inner_G = {}
+local inner_obj = {}
 
-if accelerate and decelerate and num == 2 then
-  if ratio < 0.5 then
-    return st + (ed - st) * single_ease_in(ratio * 2) / 2
+inner_obj.getpoint = function(...)
+  local args = { ... }
+  local target = args[1]
+  local option = args[2]
+  local option2 = args[3]
+  if type(target) == "number" then
+    if #args > 1 then
+      return obj.getpoint(target + starts_at, option)
+    else
+      return obj.getpoint(target + starts_at)
+    end
+  elseif target == "accelerate" then
+    return accelerate
+  elseif target == "decelerate" then
+    return decelerate
+  elseif target == "index" then
+    return obj.getpoint("index") - starts_at
+  elseif target == "param" then
+    return 0
+  elseif target == "num" then
+    return ends_at - starts_at + 2
   else
-    return st + (ed - st) * (1 - single_ease_in((1 - ratio) * 2) / 2)
+    return obj.getpoint(target, option, option2)
   end
-elseif accelerate and index == 0 then
-  return st + (ed - st) * single_ease_in(ratio)
-elseif decelerate and index == num - 2 then
-  return st + (ed - st) * (1 - single_ease_in(1 - ratio))
-else
-  return st + (ed - st) * ratio
 end
+inner_G.obj = inner_obj
+
+setmetatable(inner_obj, { __index = _G, __newindex = _G })
+setmetatable(inner_G, { __index = _G, __newindex = _G })
+
+local f, err = loadstring(script, script_name)
+if not f then
+  error("Failed to load keyframe script: " .. err)
+end
+
+setfenv(f, inner_G)
+local success, result = pcall(f)
+if not success then
+  error("Error executing keyframe script: " .. result)
+end
+
+return result

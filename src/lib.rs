@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use anyhow::Context;
 use aviutl2_eframe::egui::TextBuffer;
 
@@ -13,6 +15,8 @@ struct KeyframesAux2 {
 
 pub static EFFECTS: std::sync::LazyLock<dashmap::DashMap<String, aviutl2::generic::Effect>> =
     std::sync::LazyLock::new(dashmap::DashMap::new);
+pub static EASINGS: std::sync::OnceLock<indexmap::IndexMap<String, crate::curve::Easing>> =
+    std::sync::OnceLock::new();
 pub static EDIT_HANDLE: aviutl2::generic::GlobalEditHandle =
     aviutl2::generic::GlobalEditHandle::new();
 pub static OBJECT_ID_TO_HANDLE: std::sync::LazyLock<
@@ -75,12 +79,10 @@ impl KeyframeTrackParams {
         static STATIC_VALUE_PATTERN: lazy_regex::Lazy<lazy_regex::regex::Regex> =
             lazy_regex::lazy_regex!(r"^[0-9\.]+$");
         if STATIC_VALUE_PATTERN.is_match(track) {
-            track.replace_with(
-                &format!(
-                    "{},{},keyframes.aux2,0|{},{}|",
-                    track, track, self.bank_id, self.keyframes_id
-                ),
-            );
+            track.replace_with(&format!(
+                "{},{},keyframes.aux2,0|{},{}|",
+                track, track, self.bank_id, self.keyframes_id
+            ));
             return Ok(());
         }
         static KEYFRAME_PATTERN: lazy_regex::Lazy<lazy_regex::regex::Regex> =
@@ -155,12 +157,14 @@ impl aviutl2::generic::GenericPlugin for KeyframesAux2 {
 
     fn on_project_load(&mut self, project: &mut aviutl2::generic::ProjectFile) {
         if EFFECTS.is_empty() {
-            tracing::info!("Loading effects...");
-            let effects = EDIT_HANDLE.get_effects();
-            for effect in effects {
-                EFFECTS.insert(effect.name.clone(), effect);
+            match load_effects() {
+                Ok(_) => {
+                    tracing::info!("Effects and easings loaded successfully");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to load effects and easings: {:?}", e);
+                }
             }
-            tracing::info!("Loaded {} effects", EFFECTS.len());
         }
 
         let last_bank_id: usize = project.deserialize("last_bank_id").unwrap_or(0);
@@ -176,39 +180,217 @@ impl aviutl2::generic::GenericPlugin for KeyframesAux2 {
         }
     }
 
+    fn on_project_save(&mut self, project: &mut aviutl2::generic::ProjectFile) {
+        project
+            .serialize("last_bank_id", &*CURRENT_BANK.lock().unwrap())
+            .unwrap();
+        let info = EDIT_HANDLE.get_edit_info();
+        let _ = EDIT_HANDLE.call_read_section(|read| {
+            clear_unused_keyframes(&info, read);
+        });
+        let keyframes: Vec<(KeyframeTrackParams, crate::curve::Keyframes)> = KEYFRAMES
+            .iter()
+            .map(|entry| (*entry.key(), entry.value().clone()))
+            .collect();
+        project.serialize("keyframes", &keyframes).unwrap();
+    }
+
     fn on_change_scene(&mut self, edit: &aviutl2::generic::EditSection) {
         {
             let mut current_bank_id = CURRENT_BANK.lock().unwrap();
             *current_bank_id += 1;
         }
-        let mut used_bank_ids = std::collections::HashSet::new();
-        let mut used_keyframes = std::collections::HashSet::new();
-        for layer in edit.layers() {
-            for (position, object) in layer.objects() {
-                if let Err(e) =
-                    collect_used_keyframes(edit, object, &mut used_bank_ids, &mut used_keyframes)
-                {
-                    tracing::error!(
-                        "Failed to collect used keyframes for object at position {:?} in layer {:?}: {:?}",
-                        position,
-                        layer.index,
-                        e
-                    );
-                }
-            }
-        }
-        tracing::info!("Used bank IDs: {:?}", used_bank_ids);
-        tracing::info!("Used keyframes: {:?}", used_keyframes);
-        let before_len = KEYFRAMES.len();
-        KEYFRAMES.retain(|params, _| {
-            !used_bank_ids.contains(&params.bank_id) || used_keyframes.contains(params)
-        });
-        tracing::info!("Removed {} unused keyframes", before_len - KEYFRAMES.len());
+        clear_unused_keyframes(&edit.info, edit);
     }
 }
 
+fn clear_unused_keyframes(info: &aviutl2::generic::EditInfo, read: &aviutl2::generic::ReadSection) {
+    let mut used_bank_ids = std::collections::HashSet::new();
+    let mut used_keyframes = std::collections::HashSet::new();
+    for layer_index in 0..=info.layer_max {
+        let layer = read.layer(layer_index);
+        for (position, object) in layer.objects() {
+            if let Err(e) =
+                collect_used_keyframes(read, object, &mut used_bank_ids, &mut used_keyframes)
+            {
+                tracing::error!(
+                    "Failed to collect used keyframes for object at position {:?} in layer {:?}: {:?}",
+                    position,
+                    layer.index,
+                    e
+                );
+            }
+        }
+    }
+    tracing::info!("Used bank IDs: {:?}", used_bank_ids);
+    let before_len = KEYFRAMES.len();
+    let current_bank_id = *CURRENT_BANK.lock().unwrap();
+    KEYFRAMES.retain(|params, _| {
+        !used_bank_ids.contains(&params.bank_id)
+            || params.bank_id == current_bank_id
+            || used_keyframes.contains(params)
+    });
+    tracing::info!("Removed {} unused keyframes", before_len - KEYFRAMES.len());
+}
+
+fn load_effects() -> anyhow::Result<()> {
+    tracing::info!("Loading effects...");
+    let effects = EDIT_HANDLE.get_effects();
+    for effect in effects {
+        EFFECTS.insert(effect.name.clone(), effect);
+    }
+    tracing::info!("Loaded {} effects", EFFECTS.len());
+    tracing::info!("Loading easings...");
+    let mut easings = vec![];
+    static STANDARD_EASINGS: include_dir::Dir<'_> =
+        include_dir::include_dir!("$CARGO_MANIFEST_DIR/src/std");
+    for file in STANDARD_EASINGS.files() {
+        if let Some(content) = file.contents_utf8() {
+            let easing_name = file.path().file_stem().unwrap().to_string_lossy();
+            let easing = crate::curve::Easing::from_script(&easing_name, content);
+            easings.push(easing);
+            tracing::info!("Loaded standard easing: {}", easing_name);
+        }
+    }
+
+    let bundled_easings = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("script.tra2");
+    if let Ok(content) = std::fs::read_to_string(bundled_easings) {
+        let bundled_easings = crate::curve::Easing::from_multi_script(&content);
+        for easing in &bundled_easings {
+            tracing::info!("Loaded bundled easing: {}", &easing.name);
+        }
+        easings.extend(bundled_easings);
+    }
+
+    let data_dir = aviutl2::config::app_data_path();
+    let script_dir = data_dir.join("Script");
+    let mut files = vec![];
+    for entry in std::fs::read_dir(script_dir)
+        .unwrap_or_else(|_| {
+            panic!(
+                "Failed to read Script directory in app data path: {:?}",
+                data_dir.join("Script")
+            )
+        })
+        .flatten()
+    {
+        let path = entry.path();
+        if path.is_file()
+            && (path.extension().and_then(|s| s.to_str()) == Some("tra2")
+                || path.extension().and_then(|s| s.to_str()) == Some("tra"))
+        {
+            files.push((None, path.clone()));
+        } else if path.is_dir() {
+            let Ok(read_dir) = std::fs::read_dir(&path) else {
+                tracing::warn!("Failed to read subdirectory {:?} in Script directory", path);
+                continue;
+            };
+            let dir_name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string());
+            for sub_entry in read_dir.flatten() {
+                let sub_path = sub_entry.path();
+                if sub_path.is_file()
+                    && (sub_path.extension().and_then(|s| s.to_str()) == Some("tra2")
+                        || sub_path.extension().and_then(|s| s.to_str()) == Some("tra"))
+                {
+                    files.push((dir_name.clone(), sub_path.clone()));
+                }
+            }
+        }
+    }
+    tracing::info!(
+        "Found {} easing script files in Script directory",
+        files.len()
+    );
+    for (label, file) in files {
+        let encoded = if file.extension().and_then(|s| s.to_str()) == Some("tra") {
+            encoding_rs::SHIFT_JIS
+                .decode(&match std::fs::read(&file) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        tracing::warn!("Failed to read easing script file {:?}: {:?}", file, e);
+                        continue;
+                    }
+                })
+                .0
+                .to_string()
+        } else {
+            match std::fs::read_to_string(&file) {
+                Ok(content) => content,
+                Err(e) => {
+                    tracing::warn!("Failed to read easing script file {:?}: {:?}", file, e);
+                    continue;
+                }
+            }
+        };
+
+        let file_stem = file.file_stem().unwrap_or_default().to_string_lossy();
+        if file
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .starts_with('@')
+        {
+            let scripts = crate::curve::Easing::from_multi_script(&encoded);
+            for mut script in scripts {
+                tracing::info!(
+                    "Loaded easing from script file: {}{}",
+                    script.name,
+                    file_stem
+                );
+                script.name = format!("{}{}", script.name, file_stem);
+                script.label = script.label.or_else(|| label.clone());
+                easings.push(script);
+            }
+        } else {
+            let mut easing = crate::curve::Easing::from_script(&file_stem, &encoded);
+            tracing::info!("Loaded easing from script file: {}", file_stem);
+            easing.label = easing.label.or_else(|| label.clone());
+            easings.push(easing);
+        }
+    }
+
+    easings.retain(|easing| easing.name != "keyframes.aux2");
+
+    tracing::info!("Total easings loaded: {}", easings.len());
+
+    let config = aviutl2::config::app_data_path().join("aviutl2.ini");
+    let table = std::fs::read_to_string(&config)
+        .ok()
+        .and_then(|content| aviutl2::alias::Table::from_str(&content).ok())
+        .unwrap_or_default();
+
+    easings.sort_by_key(|easing| {
+        table
+            .get_table(&format!("Movement.{}", easing.name))
+            .and_then(|t| t.get_value("order"))
+            .and_then(|s| s.parse::<i32>().ok())
+            .unwrap_or(i32::MAX)
+    });
+
+    let mut index_map = indexmap::IndexMap::new();
+    for easing in easings {
+        if index_map.contains_key(&easing.name) {
+            tracing::warn!("Duplicate easing name found: {}. Skipping.", easing.name);
+            continue;
+        }
+        index_map.insert(easing.name.clone(), easing);
+    }
+    if EASINGS.set(index_map).is_err() {
+        panic!("Failed to set easings");
+    }
+
+    Ok(())
+}
+
 fn collect_used_keyframes(
-    edit: &aviutl2::generic::EditSection,
+    edit: &aviutl2::generic::ReadSection,
     object: aviutl2::generic::ObjectHandle,
     used_bank_ids: &mut std::collections::HashSet<usize>,
     used_keyframes: &mut std::collections::HashSet<KeyframeTrackParams>,
