@@ -19,6 +19,7 @@ impl aviutl2::module::ScriptModule for KeyframesMod2 {
 
 #[aviutl2::module::functions]
 impl KeyframesMod2 {
+    #[expect(clippy::type_complexity)]
     fn get_keyframe(
         &self,
         bank_id: i32,

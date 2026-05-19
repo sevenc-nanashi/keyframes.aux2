@@ -201,6 +201,10 @@ impl KeyframesGui {
 
         let mut change_bindings =
             indexmap::IndexMap::<crate::KeyframeBinding, crate::KeyframeTrackParams>::new();
+        let mut migrations = std::collections::HashMap::<
+            crate::KeyframeTrackParams,
+            crate::KeyframeTrackParams,
+        >::new();
         let mut param_to_effect = indexmap::IndexMap::<
             crate::KeyframeTrackParams,
             (aviutl2::generic::ObjectHandle, String, usize),
@@ -221,8 +225,12 @@ impl KeyframesGui {
                         existing_params,
                         effect_key
                     );
-                    let new_params = crate::KeyframeTrackParams::new();
+                    let new_params = *migrations.entry(*params).or_default();
                     change_bindings.insert(binding.clone(), new_params);
+                    if let Some(keyframes) = crate::KEYFRAMES.get(params) {
+                        crate::KEYFRAMES.insert(new_params, keyframes.clone());
+                    }
+                    migrations.insert(*params, new_params);
                 } else if params.bank_id == 0 {
                     tracing::info!(
                         "Uninitialized keyframe track params {:?} for effect {:?}",
@@ -232,7 +240,7 @@ impl KeyframesGui {
                     let new_params = crate::KeyframeTrackParams::new();
                     change_bindings.insert(binding.clone(), new_params);
                 } else {
-                    let num_sections = read.get_object_section_num(binding.object)?;
+                    let num_keyframes = read.get_object_section_num(binding.object)? + 1;
                     match crate::KEYFRAMES.get(params) {
                         None => {
                             tracing::info!(
@@ -241,26 +249,27 @@ impl KeyframesGui {
                                 effect_key
                             );
                             crate::KEYFRAMES
-                                .insert(*params, crate::curve::Keyframes::new(num_sections));
+                                .insert(*params, crate::curve::Keyframes::new(num_keyframes));
                             param_to_effect.insert(*params, effect_key);
                         }
                         Some(existing_keyframes)
-                            if existing_keyframes.keyframes.len() != num_sections =>
+                            if existing_keyframes.keyframes.len() != num_keyframes =>
                         {
                             tracing::info!(
                                 "Keyframe track params {:?} for effect {:?} has different number of keyframes ({} in global map, {} in object)",
                                 params,
                                 effect_key,
                                 existing_keyframes.keyframes.len(),
-                                num_sections
+                                num_keyframes
                             );
-                            let new_params = crate::KeyframeTrackParams::new();
+                            let new_params = *migrations.entry(*params).or_default();
                             let mut new_keyframes = existing_keyframes.clone();
                             drop(existing_keyframes);
-                            new_keyframes.resize(num_sections);
+                            new_keyframes.resize(num_keyframes);
                             crate::KEYFRAMES.insert(new_params, new_keyframes);
                             change_bindings.insert(binding.clone(), new_params);
                             param_to_effect.insert(*params, effect_key);
+                            migrations.insert(*params, new_params);
                         }
                         Some(_) => {
                             param_to_effect.insert(*params, effect_key);
@@ -339,7 +348,7 @@ impl KeyframesGui {
     ) {
         ui.collapsing(format!("Effect: {}", effect.name), |ui| {
             for (params, track) in &effect.keyframe_tracks {
-                ui.push_id(params, |ui| {
+                ui.push_id(&track.names, |ui| {
                     self.render_keyframe_track_info(ui, info, object, effect, params, track);
                 });
             }
@@ -731,41 +740,19 @@ impl KeyframesGui {
             aviutl2::generic::EffectType::Filter
                 if matches!(first_effect_type, Some(EffectType::Control)) =>
             {
-                if effect_info.flag.video {
-                    EffectType::VideoFilter
-                } else if effect_info.flag.audio {
+                if effect_info.flag.audio {
                     EffectType::AudioFilter
                 } else {
-                    tracing::error!(
-                        "Effect with Filter type but no video/audio flag: {:?}",
-                        effect_info
-                    );
-                    unreachable!()
+                    EffectType::VideoFilter
                 }
-            }
-            aviutl2::generic::EffectType::Filter if effect_info.flag.video => {
-                EffectType::VideoEffect
             }
             aviutl2::generic::EffectType::Filter if effect_info.flag.audio => {
                 EffectType::AudioEffect
             }
-            aviutl2::generic::EffectType::Filter => {
-                tracing::error!(
-                    "Effect with Filter type but no video/audio flag: {:?}",
-                    effect_info
-                );
-                unreachable!()
-            }
+            aviutl2::generic::EffectType::Filter => EffectType::VideoEffect,
 
-            aviutl2::generic::EffectType::Input if effect_info.flag.video => EffectType::VideoInput,
             aviutl2::generic::EffectType::Input if effect_info.flag.audio => EffectType::AudioInput,
-            aviutl2::generic::EffectType::Input => {
-                tracing::error!(
-                    "Effect with Input type but no video/audio flag: {:?}",
-                    effect_info
-                );
-                unreachable!()
-            }
+            aviutl2::generic::EffectType::Input => EffectType::VideoInput,
             aviutl2::generic::EffectType::SceneChange => EffectType::Control,
             aviutl2::generic::EffectType::Control => EffectType::Control,
             aviutl2::generic::EffectType::Output => {

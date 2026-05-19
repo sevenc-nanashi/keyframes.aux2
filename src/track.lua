@@ -3,7 +3,7 @@
 
 local mod = obj.module("keyframes.aux2")
 local bank_id, keyframe_id = obj.getpoint("param")
-local index, ratio = math.modf(obj.getpoint("index"))
+local index, _ratio = math.modf(obj.getpoint("index"))
 
 local starts_at, ends_at, script_name, script, accelerate, decelerate = mod.get_keyframe(bank_id, keyframe_id, index)
 
@@ -21,6 +21,12 @@ inner_obj.getpoint = function(...)
     else
       return obj.getpoint(target + starts_at)
     end
+  elseif target == "time" then
+    if option then
+      return obj.getpoint("time", option + starts_at) - obj.getpoint("time", starts_at)
+    else
+      return obj.getpoint("time") - obj.getpoint("time", starts_at)
+    end
   elseif target == "accelerate" then
     return accelerate
   elseif target == "decelerate" then
@@ -32,12 +38,14 @@ inner_obj.getpoint = function(...)
   elseif target == "num" then
     return ends_at - starts_at + 2
   else
-    return obj.getpoint(target, option, option2)
+    return obj.getpoint(unpack(args))
+    -- local ret = { obj.getpoint(unpack(args)) }
+    -- return unpack(ret)
   end
 end
 inner_G.obj = inner_obj
 
-setmetatable(inner_obj, { __index = _G, __newindex = _G })
+setmetatable(inner_obj, { __index = obj, __newindex = obj })
 setmetatable(inner_G, { __index = _G, __newindex = _G })
 
 local f, err = loadstring(script, script_name)

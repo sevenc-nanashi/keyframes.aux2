@@ -8,17 +8,17 @@ impl Keyframes {
         keyframes[0].easing = Some("直線移動".to_string());
         Self { keyframes }
     }
-    pub fn resize(&mut self, num_sections: usize) {
-        if num_sections <= 1 {
-            panic!("num_sections must be greater than 1");
+    pub fn resize(&mut self, num_keyframes: usize) {
+        if num_keyframes <= 1 {
+            panic!("num_keyframes must be greater than 1");
         }
-        if self.keyframes.len() < num_sections {
+        if self.keyframes.len() < num_keyframes {
             self.keyframes.extend(vec![
                 Keyframe::default();
-                num_sections - self.keyframes.len()
+                num_keyframes - self.keyframes.len()
             ]);
         } else {
-            self.keyframes.truncate(num_sections);
+            self.keyframes.truncate(num_keyframes);
         }
     }
 }

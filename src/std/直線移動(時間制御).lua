@@ -1,8 +1,9 @@
 --speed:0,0
 --twopoint
+--timecontrol
 
 local num = obj.getpoint("num")
-local index, ratio = math.modf(obj.getpoint("index"))
+local index, ratio = math.modf(obj.getpoint("timecontrol", "index"))
 local st = obj.getpoint(index)
 local ed = obj.getpoint(index + 1)
 
