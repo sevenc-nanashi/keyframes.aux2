@@ -5,7 +5,7 @@ pub struct Keyframes {
 impl Keyframes {
     pub fn new(num_sections: usize) -> Self {
         let mut keyframes = vec![Keyframe::default(); num_sections];
-        keyframes[0].easing = Some("直線移動".to_string());
+        keyframes[0] = Keyframe::Easing(EasingKeyframeInfo::default());
         Self { keyframes }
     }
     pub fn resize(&mut self, num_keyframes: usize) {
@@ -24,12 +24,29 @@ impl Keyframes {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct Keyframe {
-    /// このキーフレームから適用するイージング
-    pub easing: Option<String>,
+pub enum Keyframe {
+    Easing(EasingKeyframeInfo),
+    Ignored,
+    #[default]
+    Midpoint,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EasingKeyframeInfo {
+    pub easing: String,
     pub acceleration: bool,
     pub deceleration: bool,
     pub params: Vec<f64>,
+}
+impl Default for EasingKeyframeInfo {
+    fn default() -> Self {
+        Self {
+            easing: "直線移動".to_string(),
+            acceleration: false,
+            deceleration: false,
+            params: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

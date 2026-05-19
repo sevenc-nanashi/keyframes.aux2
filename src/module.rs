@@ -25,7 +25,7 @@ impl KeyframesMod2 {
         bank_id: i32,
         track_id: i32,
         index: usize,
-    ) -> aviutl2::common::AnyResult<(usize, usize, String, String, bool, bool, Vec<f64>)> {
+    ) -> aviutl2::common::AnyResult<(Vec<i32>, String, String, bool, bool, Vec<f64>)> {
         let param = crate::KeyframeTrackParams {
             bank_id: bank_id as _,
             keyframes_id: track_id as _,
@@ -38,21 +38,30 @@ impl KeyframesMod2 {
             .iter()
             .enumerate()
             .take(index + 1)
-            .rfind(|(_, k)| k.easing.is_some())
-            .context("failed to find keyframe with easing")?;
-        let ends_at = index
-            + keyframes.keyframes[(index + 1)..]
-                .iter()
-                .take_while(|k| k.easing.is_none())
-                .count();
+            .rfind(|(_, k)| matches!(k, crate::curve::Keyframe::Easing(_)))
+            .expect("first keyframe must be easing");
+        let crate::curve::Keyframe::Easing(keyframe) = keyframe else {
+            unreachable!()
+        };
+        let mut indices = vec![index as i32];
+        for i in (index + 1)..keyframes.keyframes.len() {
+            match &keyframes.keyframes[i] {
+                crate::curve::Keyframe::Easing(_) => {
+                    indices.push(i as i32);
+                    break;
+                }
+                crate::curve::Keyframe::Midpoint => indices.push(i as i32),
+                crate::curve::Keyframe::Ignored => (),
+            }
+        }
+        aviutl2::ldbg!(&indices);
         let easing = crate::EASINGS
             .get()
             .context("easings not initialized")?
-            .get(keyframe.easing.as_ref().unwrap())
+            .get(&keyframe.easing)
             .context("easing not found")?;
         Ok((
-            index,
-            ends_at,
+            indices,
             easing.name.clone(),
             easing.script.clone(),
             keyframe.acceleration,

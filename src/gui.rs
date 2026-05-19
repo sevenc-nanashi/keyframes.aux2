@@ -489,7 +489,10 @@ impl KeyframesGui {
                 if i == object.frames.len() - 1 {
                     continue;
                 }
-                let easing = &keyframes.keyframes[i].easing;
+                let easing = match keyframes.keyframes[i] {
+                    crate::curve::Keyframe::Easing(ref easing) => Some(easing.easing.as_str()),
+                    _ => Some("-"),
+                };
                 let left_position = (*frame - object.frames[0]) as f32 / total_frames as f32;
                 let right_position =
                     (object.frames[i + 1] - object.frames[0]) as f32 / total_frames as f32;
@@ -499,6 +502,17 @@ impl KeyframesGui {
                     rect.left() + (right_position - left_position) * response.rect.width(),
                 );
                 rect.set_left(rect.left() + ui.spacing().button_padding.x);
+
+                let color = if matches!(keyframes.keyframes[i], crate::curve::Keyframe::Ignored) {
+                    ui.visuals()
+                        .widgets
+                        .noninteractive
+                        .fg_stroke
+                        .color
+                        .linear_multiply(0.25)
+                } else {
+                    ui.visuals().widgets.noninteractive.fg_stroke.color
+                };
                 let mut layout = egui::text::LayoutJob::default();
                 layout.append(
                     if let Some(easing) = easing {
@@ -509,7 +523,7 @@ impl KeyframesGui {
                     0.0,
                     egui::TextFormat {
                         font_id: egui::FontId::default(),
-                        color: ui.visuals().widgets.noninteractive.fg_stroke.color,
+                        color,
                         ..Default::default()
                     },
                 );
@@ -520,23 +534,32 @@ impl KeyframesGui {
                         pos.y -= galley.size().y / 2.0;
                     }),
                     galley,
-                    ui.visuals().widgets.noninteractive.fg_stroke.color,
+                    color,
                 );
             }
-        }
 
-        // 中間点の線
-        for (i, frame) in object.frames.iter().enumerate() {
-            if i == 0 || i == object.frames.len() - 1 {
-                continue;
+            // 中間点の線
+            for (i, frame) in object.frames.iter().enumerate() {
+                if i == 0 || i == object.frames.len() - 1 {
+                    continue;
+                }
+                let position =
+                    (*frame - object.frames.first().unwrap()) as f32 / total_frames as f32;
+                let mut rect = response.rect;
+                rect.set_left(rect.left() + position * response.rect.width() - 1.0);
+                rect.set_right(rect.left() + 1.0);
+                let color = if matches!(keyframes.keyframes[i], crate::curve::Keyframe::Ignored) {
+                    ui.visuals()
+                        .widgets
+                        .noninteractive
+                        .bg_fill
+                        .linear_multiply(0.25)
+                } else {
+                    ui.visuals().widgets.noninteractive.bg_fill
+                };
+                painter.rect_filled(rect, 0.0, color);
             }
-            let position = (*frame - object.frames.first().unwrap()) as f32 / total_frames as f32;
-            let mut rect = response.rect;
-            rect.set_left(rect.left() + position * response.rect.width() - 1.0);
-            rect.set_right(rect.left() + 1.0);
-            painter.rect_filled(rect, 0.0, ui.visuals().widgets.noninteractive.bg_fill);
         }
-
         // カーソル
         if *object.frames.first().unwrap() <= info.frame
             && info.frame <= *object.frames.last().unwrap()
@@ -572,24 +595,32 @@ impl KeyframesGui {
             }
         };
 
-        let default_keyframe = crate::curve::Keyframe::default();
         let (keyframe_index, current_keyframe) = &keyframes
             .keyframes
             .iter()
             .enumerate()
             .take(index + 1)
-            .rfind(|(_, k)| k.easing.is_some())
-            .unwrap_or((0, &default_keyframe));
+            .rfind(|(_, k)| matches!(k, crate::curve::Keyframe::Easing(_)))
+            .expect(
+                "少なくとも0フレーム目にはイージングが設定されているはずなので、必ず見つかるはず",
+            );
         let keyframe_index = *keyframe_index;
-        let current_easing =
-            easings.get(current_keyframe.easing.as_ref().unwrap_or(&"".to_string()));
+        let crate::curve::Keyframe::Easing(current_keyframe) = current_keyframe else {
+            unreachable!();
+        };
+        let current_easing = easings.get(&current_keyframe.easing);
 
         // TODO: ちゃんとlabelごとに階層にする
         egui::ScrollArea::vertical().show(ui, |ui| {
             if current_level.is_empty() && index > 0 {
                 if ui.button("引き継ぎ").clicked() {
                     let mut new_keyframes = keyframes.clone();
-                    new_keyframes.keyframes[index].easing = None;
+                    new_keyframes.keyframes[index] = crate::curve::Keyframe::Midpoint;
+                    update_keyframe(new_keyframes);
+                }
+                if ui.button("無視").clicked() {
+                    let mut new_keyframes = keyframes.clone();
+                    new_keyframes.keyframes[index] = crate::curve::Keyframe::Ignored;
                     update_keyframe(new_keyframes);
                 }
                 ui.separator();
@@ -599,13 +630,19 @@ impl KeyframesGui {
                     let mut current_acceleration = current_keyframe.acceleration;
                     if ui.checkbox(&mut current_acceleration, "加速").changed() {
                         let mut new_keyframes = keyframes.clone();
-                        new_keyframes.keyframes[keyframe_index].acceleration = current_acceleration;
+                        let crate::curve::Keyframe::Easing(ref mut k) = new_keyframes.keyframes[keyframe_index] else {
+                            unreachable!();
+                        };
+                        k.acceleration = current_acceleration;
                         update_keyframe(new_keyframes);
                     }
                     let mut current_deceleration = current_keyframe.deceleration;
                     if ui.checkbox(&mut current_deceleration, "減速").changed() {
                         let mut new_keyframes = keyframes.clone();
-                        new_keyframes.keyframes[keyframe_index].deceleration = current_deceleration;
+                        let crate::curve::Keyframe::Easing(ref mut k) = new_keyframes.keyframes[keyframe_index] else {
+                            unreachable!();
+                        };
+                        k.acceleration = current_acceleration;
                         update_keyframe(new_keyframes);
                     }
                 }
@@ -622,9 +659,12 @@ impl KeyframesGui {
             for easing in easings.values() {
                 if ui.button(&easing.name).clicked() {
                     let mut new_keyframes = keyframes.clone();
-                    new_keyframes.keyframes[index].easing = Some(easing.name.clone());
-                    new_keyframes.keyframes[index].acceleration = easing.default_acceleration;
-                    new_keyframes.keyframes[index].deceleration = easing.default_deceleration;
+                    new_keyframes.keyframes[index] = crate::curve::Keyframe::Easing(crate::curve::EasingKeyframeInfo {
+                        easing: easing.name.clone(),
+                        acceleration: easing.default_acceleration,
+                        deceleration: easing.default_deceleration,
+                        params: easing.params.values().cloned().collect(),
+                    });
                     update_keyframe(new_keyframes);
                 }
             }
