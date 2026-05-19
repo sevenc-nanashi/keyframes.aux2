@@ -1,4 +1,5 @@
 use anyhow::Context;
+use aviutl2_eframe::egui::TextBuffer;
 
 mod curve;
 mod gui;
@@ -20,10 +21,9 @@ pub static OBJECT_ID_TO_HANDLE: std::sync::LazyLock<
 pub static KEYFRAMES: std::sync::LazyLock<
     dashmap::DashMap<KeyframeTrackParams, crate::curve::Keyframes>,
 > = std::sync::LazyLock::new(dashmap::DashMap::new);
-pub static PARAMS_TO_BINDINGS: std::sync::LazyLock<
-    dashmap::DashMap<KeyframeTrackParams, Vec<KeyframeBinding>>,
-> = std::sync::LazyLock::new(dashmap::DashMap::new);
 pub static CURRENT_BANK: std::sync::LazyLock<std::sync::Mutex<usize>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(1));
+pub static CURRENT_KEYFRAMES_ID: std::sync::LazyLock<std::sync::Mutex<usize>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(0));
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct KeyframeTrackParams {
@@ -31,10 +31,30 @@ pub struct KeyframeTrackParams {
     pub keyframes_id: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl KeyframeTrackParams {
+    pub fn new() -> Self {
+        let current_bank_id = CURRENT_BANK.lock().unwrap();
+        let mut current_keyframes_id = CURRENT_KEYFRAMES_ID.lock().unwrap();
+        let params = Self {
+            bank_id: *current_bank_id,
+            keyframes_id: *current_keyframes_id,
+        };
+        *current_keyframes_id += 1;
+        params
+    }
+}
+
+impl Default for KeyframeTrackParams {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct KeyframeBinding {
     pub object: aviutl2::generic::ObjectHandle,
     pub effect_name: String,
+    pub effect_index: usize,
     pub track_name: String,
 }
 
@@ -51,21 +71,36 @@ impl KeyframeTrackParams {
             keyframes_id,
         })
     }
-    pub fn set_params(&self, alias: &mut String) {
-        let new_alias = format!("keyframes.aux2,{},{}", self.bank_id, self.keyframes_id);
-        static KEYFRAME_PATTERN: lazy_regex::Lazy<lazy_regex::regex::Regex> = lazy_regex::lazy_regex!(
-            r"keyframes\.aux2,\d+\|(?<bank_id>\d+),(?<keyframes_id>\d+)(?:$|\|)"
-        );
-        if KEYFRAME_PATTERN.is_match(alias) {
-            *alias = KEYFRAME_PATTERN
-                .replace(alias, new_alias.as_str())
-                .to_string();
-        } else {
-            if !alias.is_empty() {
-                alias.push('|');
-            }
-            alias.push_str(&new_alias);
+    pub fn set_params(&self, track: &mut String) -> anyhow::Result<()> {
+        static STATIC_VALUE_PATTERN: lazy_regex::Lazy<lazy_regex::regex::Regex> =
+            lazy_regex::lazy_regex!(r"^[0-9\.]+$");
+        if STATIC_VALUE_PATTERN.is_match(track) {
+            track.replace_with(
+                &format!(
+                    "{},{},keyframes.aux2,0|{},{}|",
+                    track, track, self.bank_id, self.keyframes_id
+                ),
+            );
+            return Ok(());
         }
+        static KEYFRAME_PATTERN: lazy_regex::Lazy<lazy_regex::regex::Regex> =
+            lazy_regex::lazy_regex!(r"(?<easing>[^,]+),(?<flags>\d+)(?<rest>$|\|[^|]*$|\|[^|]*\|)");
+        let captures = KEYFRAME_PATTERN
+            .captures(track)
+            .context("Failed to match keyframe alias pattern")?;
+        let flags = captures.name("flags").unwrap();
+        let rest = captures.name("rest").unwrap();
+        let new_alias = format!(
+            "keyframes.aux2,{}|{},{}{}",
+            flags.as_str(),
+            self.bank_id,
+            self.keyframes_id,
+            rest.as_str()
+        );
+        let start = captures.get(0).unwrap().start();
+        let end = captures.get(0).unwrap().end();
+        track.replace_range(start..end, &new_alias);
+        Ok(())
     }
 }
 
@@ -185,12 +220,22 @@ fn collect_used_keyframes(
         .get_table("Object")
         .context("Failed to get Object table")?;
     for object in objects.iter_subtables_as_array() {
-        for (_key, value) in object.values() {
-            if let Some(params) = KeyframeTrackParams::parse(&value) {
-                used_bank_ids.insert(params.bank_id);
-                used_keyframes.insert(params);
+        let effect_name = object
+            .get_value("effect.name")
+            .context("Failed to get effect name")?;
+        crate::EDIT_HANDLE.enumerate_effect_items(effect_name, |item| {
+            if item.item_type != aviutl2::generic::EffectItemType::Number {
+                return;
             }
-        }
+            let Some(value) = object.get_value(&item.name) else {
+                return;
+            };
+            let Some(params) = crate::KeyframeTrackParams::parse(value) else {
+                return;
+            };
+            used_bank_ids.insert(params.bank_id);
+            used_keyframes.insert(params);
+        })?;
     }
     Ok(())
 }

@@ -84,16 +84,87 @@ pub fn create_gui(
 impl aviutl2_eframe::eframe::App for KeyframesGui {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if crate::EDIT_HANDLE.is_ready() {
-            let _ = crate::EDIT_HANDLE.call_read_section(|r| {
-                let res = Self::update_keyframe_bindings(r);
-                if let Err(e) = res {
+            if !crate::EDIT_HANDLE
+                .get_edit_state()
+                .is_ok_and(|state| state == aviutl2::generic::EditState::Edit)
+            {
+                return;
+            }
+            let update_bindings = crate::EDIT_HANDLE
+                .call_read_section(Self::update_keyframe_bindings)
+                .map_err(anyhow::Error::from)
+                .flatten();
+            let change_bindings = match update_bindings {
+                Ok(bindings) => bindings,
+                Err(e) => {
                     tracing::error!("Failed to update keyframe bindings: {:?}", e);
+                    return;
                 }
-                let res = self.update_selected_object_info(r);
-                if let Err(e) = res {
-                    tracing::error!("Failed to update selected object info: {:?}", e);
+            };
+            if !change_bindings.is_empty() {
+                tracing::info!(
+                    "Updating keyframe track params for {} bindings",
+                    change_bindings.len()
+                );
+                let update_result = crate::EDIT_HANDLE
+                    .call_edit_section(|edit| {
+                        for (binding, new_params) in change_bindings {
+                            tracing::info!(
+                                "Updating keyframe track params for object {:?}, effect {:?} (index {}), track {:?} to {:?}",
+                                binding.object,
+                                binding.effect_name,
+                                binding.effect_index,
+                                binding.track_name,
+                                new_params
+                            );
+                            let mut track = edit.get_object_effect_item(
+                                binding.object,
+                                &binding.effect_name,
+                                binding.effect_index,
+                                &binding.track_name,
+                            )?;
+                            tracing::debug!(
+                                "Current keyframe track params for object {:?}, effect {:?} (index {}), track {:?}: {:?}",
+                                binding.object,
+                                binding.effect_name,
+                                binding.effect_index,
+                                binding.track_name,
+                                &track
+                            );
+                            new_params.set_params(&mut track)?;
+                            edit.set_object_effect_item(
+                                binding.object,
+                                &binding.effect_name,
+                                binding.effect_index,
+                                &binding.track_name,
+                                &track,
+                            )?;
+                            tracing::debug!(
+                                "Updated keyframe track params for object {:?}, effect {:?} (index {}), track {:?} to {:?}",
+                                binding.object,
+                                binding.effect_name,
+                                binding.effect_index,
+                                binding.track_name,
+                                &track
+                            );
+                        }
+                        anyhow::Ok(())
+                    })
+                    .map_err(anyhow::Error::from)
+                    .flatten();
+                if let Err(e) = update_result {
+                    tracing::error!("Failed to update keyframe track params: {:?}", e);
+                    return;
                 }
-            });
+            }
+
+            let update_selected_object_info = crate::EDIT_HANDLE
+                .call_read_section(|read| self.update_selected_object_info(read))
+                .map_err(anyhow::Error::from)
+                .flatten();
+            if let Err(e) = update_selected_object_info {
+                tracing::error!("Failed to update selected object info: {:?}", e);
+            }
         }
     }
     fn ui(&mut self, ui: &mut aviutl2_eframe::egui::Ui, frame: &mut aviutl2_eframe::eframe::Frame) {
@@ -113,12 +184,12 @@ impl aviutl2_eframe::eframe::App for KeyframesGui {
 impl KeyframesGui {
     fn update_keyframe_bindings(
         read: &aviutl2::generic::ReadSection,
-    ) -> aviutl2::common::AnyResult<()> {
+    ) -> aviutl2::common::AnyResult<
+        indexmap::IndexMap<crate::KeyframeBinding, crate::KeyframeTrackParams>,
+    > {
         let info = crate::EDIT_HANDLE.get_edit_info();
-        let mut bindings = std::collections::HashMap::<
-            crate::KeyframeTrackParams,
-            Vec<crate::KeyframeBinding>,
-        >::new();
+        let mut bindings =
+            indexmap::IndexMap::<crate::KeyframeTrackParams, Vec<crate::KeyframeBinding>>::new();
 
         for layer in 0..=info.layer_max {
             for (_, object) in read.objects_in_layer(layer) {
@@ -126,21 +197,84 @@ impl KeyframesGui {
             }
         }
 
-        crate::PARAMS_TO_BINDINGS.clear();
-        for (params, bindings) in bindings {
-            crate::PARAMS_TO_BINDINGS.insert(params, bindings);
+        let mut change_bindings =
+            indexmap::IndexMap::<crate::KeyframeBinding, crate::KeyframeTrackParams>::new();
+        let mut param_to_effect = indexmap::IndexMap::<
+            crate::KeyframeTrackParams,
+            (aviutl2::generic::ObjectHandle, String, usize),
+        >::new();
+        for (params, bindings) in &bindings {
+            for binding in bindings {
+                let effect_key = (
+                    binding.object,
+                    binding.effect_name.clone(),
+                    binding.effect_index,
+                );
+                if let Some(existing_params) = param_to_effect.get(params)
+                    && existing_params != &effect_key
+                {
+                    tracing::info!(
+                        "Duplicated keyframe track params {:?} for effect {:?} and effect {:?}",
+                        params,
+                        existing_params,
+                        effect_key
+                    );
+                    let new_params = crate::KeyframeTrackParams::new();
+                    change_bindings.insert(binding.clone(), new_params);
+                } else if params.bank_id == 0 {
+                    tracing::info!(
+                        "Uninitialized keyframe track params {:?} for effect {:?}",
+                        params,
+                        effect_key
+                    );
+                    let new_params = crate::KeyframeTrackParams::new();
+                    change_bindings.insert(binding.clone(), new_params);
+                } else {
+                    let num_sections = read.get_object_section_num(binding.object)?;
+                    match crate::KEYFRAMES.get(params) {
+                        None => {
+                            tracing::info!(
+                                "Keyframe track params {:?} for effect {:?} is not registered in global keyframes map",
+                                params,
+                                effect_key
+                            );
+                            crate::KEYFRAMES
+                                .insert(*params, crate::curve::Keyframes::new(num_sections));
+                            param_to_effect.insert(*params, effect_key);
+                        }
+                        Some(existing_keyframes)
+                            if existing_keyframes.keyframes.len() != num_sections =>
+                        {
+                            tracing::info!(
+                                "Keyframe track params {:?} for effect {:?} has different number of keyframes ({} in global map, {} in object)",
+                                params,
+                                effect_key,
+                                existing_keyframes.keyframes.len(),
+                                num_sections
+                            );
+                            let new_params = crate::KeyframeTrackParams::new();
+                            let mut new_keyframes = existing_keyframes.clone();
+                            drop(existing_keyframes);
+                            new_keyframes.resize(num_sections);
+                            crate::KEYFRAMES.insert(new_params, new_keyframes);
+                            change_bindings.insert(binding.clone(), new_params);
+                            param_to_effect.insert(*params, effect_key);
+                        }
+                        Some(_) => {
+                            param_to_effect.insert(*params, effect_key);
+                        }
+                    };
+                }
+            }
         }
 
-        Ok(())
+        Ok(change_bindings)
     }
 
     fn collect_object_keyframe_bindings(
         read: &aviutl2::generic::ReadSection,
         object_handle: aviutl2::generic::ObjectHandle,
-        bindings: &mut std::collections::HashMap<
-            crate::KeyframeTrackParams,
-            Vec<crate::KeyframeBinding>,
-        >,
+        bindings: &mut indexmap::IndexMap<crate::KeyframeTrackParams, Vec<crate::KeyframeBinding>>,
     ) -> aviutl2::common::AnyResult<()> {
         let alias = read
             .get_object_alias_parsed(object_handle)
@@ -149,10 +283,14 @@ impl KeyframesGui {
             .get_table("Object")
             .context("Failed to get Object table")?;
 
+        let mut effect_count = std::collections::HashMap::<String, usize>::new();
         for object in objects.iter_subtables_as_array() {
             let effect_name = object
                 .get_value("effect.name")
                 .context("Failed to get effect name")?;
+            let effect_index = effect_count.entry(effect_name.to_string()).or_insert(0);
+            *effect_index += 1;
+            let effect_index = *effect_index - 1;
             crate::EDIT_HANDLE.enumerate_effect_items(effect_name, |item| {
                 if item.item_type != aviutl2::generic::EffectItemType::Number {
                     return;
@@ -169,6 +307,7 @@ impl KeyframesGui {
                     .push(crate::KeyframeBinding {
                         object: object_handle,
                         effect_name: effect_name.to_string(),
+                        effect_index,
                         track_name: item.name,
                     });
             })?;
@@ -197,8 +336,8 @@ impl KeyframesGui {
         effect: &EffectInfo,
     ) {
         ui.collapsing(format!("Effect: {}", effect.name), |ui| {
-            for (_, track) in &effect.keyframe_tracks {
-                self.render_keyframe_track_info(ui, info, object, effect, track);
+            for (params, track) in &effect.keyframe_tracks {
+                self.render_keyframe_track_info(ui, info, object, effect, params, track);
             }
         });
     }
@@ -209,6 +348,7 @@ impl KeyframesGui {
         info: &aviutl2::generic::EditInfo,
         object: &SelectedObjectInfo,
         effect: &EffectInfo,
+        params: &crate::KeyframeTrackParams,
         track: &KeyframeTrackInfo,
     ) {
         ui.label(track.names.join(", "));
@@ -223,11 +363,14 @@ impl KeyframesGui {
         if num_divisions == 0 {
             return;
         }
+
+        let total_frames = object.frames.last().unwrap() - object.frames.first().unwrap();
+        // 背景（グラデーション）
         let width_per_section = response.rect.width() / num_divisions as f32;
         for i in 0..num_divisions {
             let mut rect = response.rect;
             rect.set_left(rect.left() + i as f32 * width_per_section);
-            rect.set_right(rect.left() + width_per_section);
+            rect.set_right((rect.left() + width_per_section).min(response.rect.right()));
             let position = i as f32 / num_divisions as f32;
             let color = current_object_color[position.floor() as usize].lerp_to_gamma(
                 current_object_color
@@ -236,7 +379,81 @@ impl KeyframesGui {
             );
             painter.rect_filled(rect, 0.0, color);
         }
-        let total_frames = object.frames.last().unwrap() - object.frames.first().unwrap() + 1;
+
+        if let Some(keyframes) = crate::KEYFRAMES.get(params) {
+            let mut sections = vec![];
+            for i in 0..object.frames.len() - 1 {
+                let left_position =
+                    (object.frames[i] - object.frames[0]) as f32 / total_frames as f32;
+                let right_position =
+                    (object.frames[i + 1] - object.frames[0]) as f32 / total_frames as f32;
+                sections.push((i, left_position, right_position));
+            }
+            // ホバーしているセクションの強調表示
+            let hovered_section = response.hover_pos().and_then(|hover_pos| {
+                sections
+                    .into_iter()
+                    .find(|(i, left_position, right_position)| {
+                        let section_left =
+                            response.rect.left() + left_position * response.rect.width();
+                        let section_right =
+                            response.rect.left() + right_position * response.rect.width();
+                        hover_pos.x >= section_left && hover_pos.x <= section_right
+                    })
+            });
+            if let Some(hovered_section) = hovered_section {
+                let mut rect = response.rect;
+                let left_position =
+                    response.rect.left() + hovered_section.1 * response.rect.width();
+                let right_position =
+                    response.rect.left() + hovered_section.2 * response.rect.width();
+                rect.set_left(left_position);
+                rect.set_right(right_position);
+                painter.rect_filled(rect, 0.0, selected_object_color);
+            }
+
+            // 現在のイージング
+            for (i, frame) in object.frames.iter().enumerate() {
+                if i == object.frames.len() - 1 {
+                    continue;
+                }
+                let easing = &keyframes.keyframes[i].easing;
+                let left_position = (*frame - object.frames[0]) as f32 / total_frames as f32;
+                let right_position =
+                    (object.frames[i + 1] - object.frames[0]) as f32 / total_frames as f32;
+                let mut rect = response.rect;
+                rect.set_left(rect.left() + left_position * response.rect.width());
+                rect.set_right(
+                    rect.left() + (right_position - left_position) * response.rect.width(),
+                );
+                rect.set_left(rect.left() + ui.spacing().button_padding.x);
+                let mut layout = egui::text::LayoutJob::default();
+                layout.append(
+                    if let Some(easing) = easing {
+                        easing
+                    } else {
+                        "-"
+                    },
+                    0.0,
+                    egui::TextFormat {
+                        font_id: egui::FontId::default(),
+                        color: ui.visuals().widgets.noninteractive.fg_stroke.color,
+                        ..Default::default()
+                    },
+                );
+                layout.wrap = egui::text::TextWrapping::truncate_at_width(rect.width());
+                let galley = painter.layout_job(layout);
+                painter.galley(
+                    rect.left_center().tap_mut(|pos| {
+                        pos.y -= galley.size().y / 2.0;
+                    }),
+                    galley,
+                    ui.visuals().widgets.noninteractive.fg_stroke.color,
+                );
+            }
+        }
+
+        // 中間点の線
         for (i, frame) in object.frames.iter().enumerate() {
             if i == 0 || i == object.frames.len() - 1 {
                 continue;
@@ -248,6 +465,7 @@ impl KeyframesGui {
             painter.rect_filled(rect, 0.0, ui.visuals().widgets.noninteractive.bg_fill);
         }
 
+        // カーソル
         if *object.frames.first().unwrap() <= info.frame
             && info.frame <= *object.frames.last().unwrap()
         {
