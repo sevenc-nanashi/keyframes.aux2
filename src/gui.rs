@@ -28,14 +28,12 @@ pub struct SelectedObjectInfo {
 pub struct EffectInfo {
     name: String,
     effect_type: EffectType,
-    keyframe_tracks: Vec<KeyframeTrackInfo>,
+    keyframe_tracks: indexmap::IndexMap<crate::KeyframeTrackParams, KeyframeTrackInfo>,
 }
 
 #[derive(Debug, Clone)]
 pub struct KeyframeTrackInfo {
-    name: String,
-    bank_id: usize,
-    keyframes_id: usize,
+    names: Vec<String>,
 }
 
 fn get_colors(object_type: &EffectType) -> (Vec<egui::Color32>, egui::Color32) {
@@ -87,6 +85,10 @@ impl aviutl2_eframe::eframe::App for KeyframesGui {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if crate::EDIT_HANDLE.is_ready() {
             let _ = crate::EDIT_HANDLE.call_read_section(|r| {
+                let res = Self::update_keyframe_bindings(r);
+                if let Err(e) = res {
+                    tracing::error!("Failed to update keyframe bindings: {:?}", e);
+                }
                 let res = self.update_selected_object_info(r);
                 if let Err(e) = res {
                     tracing::error!("Failed to update selected object info: {:?}", e);
@@ -97,14 +99,84 @@ impl aviutl2_eframe::eframe::App for KeyframesGui {
     fn ui(&mut self, ui: &mut aviutl2_eframe::egui::Ui, frame: &mut aviutl2_eframe::eframe::Frame) {
         ui.request_repaint_after(std::time::Duration::from_millis(100));
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                self.render_selected_object_info(ui);
-            });
+            if crate::EDIT_HANDLE.is_ready() {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    self.render_selected_object_info(ui);
+                });
+            } else {
+                ui.label("Initializing...");
+            }
         });
     }
 }
 
 impl KeyframesGui {
+    fn update_keyframe_bindings(
+        read: &aviutl2::generic::ReadSection,
+    ) -> aviutl2::common::AnyResult<()> {
+        let info = crate::EDIT_HANDLE.get_edit_info();
+        let mut bindings = std::collections::HashMap::<
+            crate::KeyframeTrackParams,
+            Vec<crate::KeyframeBinding>,
+        >::new();
+
+        for layer in 0..=info.layer_max {
+            for (_, object) in read.objects_in_layer(layer) {
+                Self::collect_object_keyframe_bindings(read, object, &mut bindings)?;
+            }
+        }
+
+        crate::PARAMS_TO_BINDINGS.clear();
+        for (params, bindings) in bindings {
+            crate::PARAMS_TO_BINDINGS.insert(params, bindings);
+        }
+
+        Ok(())
+    }
+
+    fn collect_object_keyframe_bindings(
+        read: &aviutl2::generic::ReadSection,
+        object_handle: aviutl2::generic::ObjectHandle,
+        bindings: &mut std::collections::HashMap<
+            crate::KeyframeTrackParams,
+            Vec<crate::KeyframeBinding>,
+        >,
+    ) -> aviutl2::common::AnyResult<()> {
+        let alias = read
+            .get_object_alias_parsed(object_handle)
+            .context("Failed to get object alias")?;
+        let objects = alias
+            .get_table("Object")
+            .context("Failed to get Object table")?;
+
+        for object in objects.iter_subtables_as_array() {
+            let effect_name = object
+                .get_value("effect.name")
+                .context("Failed to get effect name")?;
+            crate::EDIT_HANDLE.enumerate_effect_items(effect_name, |item| {
+                if item.item_type != aviutl2::generic::EffectItemType::Number {
+                    return;
+                }
+                let Some(value) = object.get_value(&item.name) else {
+                    return;
+                };
+                let Some(params) = crate::KeyframeTrackParams::parse(value) else {
+                    return;
+                };
+                bindings
+                    .entry(params)
+                    .or_default()
+                    .push(crate::KeyframeBinding {
+                        object: object_handle,
+                        effect_name: effect_name.to_string(),
+                        track_name: item.name,
+                    });
+            })?;
+        }
+
+        Ok(())
+    }
+
     fn render_selected_object_info(&self, ui: &mut egui::Ui) {
         let Some(selected_object_info) = &self.selected_object_info else {
             ui.label("No object selected");
@@ -125,7 +197,7 @@ impl KeyframesGui {
         effect: &EffectInfo,
     ) {
         ui.collapsing(format!("Effect: {}", effect.name), |ui| {
-            for track in &effect.keyframe_tracks {
+            for (_, track) in &effect.keyframe_tracks {
                 self.render_keyframe_track_info(ui, info, object, effect, track);
             }
         });
@@ -139,7 +211,7 @@ impl KeyframesGui {
         effect: &EffectInfo,
         track: &KeyframeTrackInfo,
     ) {
-        ui.label(&track.name);
+        ui.label(track.names.join(", "));
         let (response, painter) = ui.allocate_painter(
             ui.available_size().tap_mut(|s| {
                 s.y = 24.0;
@@ -172,7 +244,7 @@ impl KeyframesGui {
             let position = (*frame - object.frames.first().unwrap()) as f32 / total_frames as f32;
             let mut rect = response.rect;
             rect.set_left(rect.left() + position * response.rect.width() - 1.0);
-            rect.set_right(rect.left() + 2.0);
+            rect.set_right(rect.left() + 1.0);
             painter.rect_filled(rect, 0.0, ui.visuals().widgets.noninteractive.bg_fill);
         }
 
@@ -183,7 +255,7 @@ impl KeyframesGui {
                 (info.frame - object.frames.first().unwrap()) as f32 / total_frames as f32;
             let mut rect = response.rect;
             rect.set_left(rect.left() + position * response.rect.width() - 1.0);
-            rect.set_right(rect.left() + 2.0);
+            rect.set_right(rect.left() + 1.0);
             let selected_line = aviutl2::config::get_color_code("FrameCursor")
                 .expect("Null文字はない")
                 .expect("そもそもこれが落ちるなら本体も落ちる")
@@ -198,7 +270,6 @@ impl KeyframesGui {
     ) -> aviutl2::common::AnyResult<()> {
         let selected_object = read.get_focused_object()?;
         let Some(selected_object) = selected_object else {
-            tracing::debug!("No object selected");
             self.selected_object_info = None;
             return Ok(());
         };
@@ -232,30 +303,36 @@ impl KeyframesGui {
             let mut effect_info = EffectInfo {
                 name: effect_name.to_string(),
                 effect_type,
-                keyframe_tracks: Vec::new(),
+                keyframe_tracks: indexmap::IndexMap::new(),
             };
-            for (key, value) in object.values() {
-                if let Some(captures) = crate::KEYFRAME_PATTERN.captures(value) {
-                    let bank_id: usize = captures
-                        .name("bank_id")
-                        .context("Failed to capture bank_id")?
-                        .as_str()
-                        .parse()
-                        .context("Failed to parse bank_id")?;
-                    let keyframes_id: usize = captures
-                        .name("keyframes_id")
-                        .context("Failed to capture keyframes_id")?
-                        .as_str()
-                        .parse()
-                        .context("Failed to parse keyframes_id")?;
-                    let keyframe_info = KeyframeTrackInfo {
-                        name: key.to_string(),
-                        bank_id,
-                        keyframes_id,
-                    };
-                    effect_info.keyframe_tracks.push(keyframe_info);
+            crate::EDIT_HANDLE.enumerate_effect_items(effect_name, |item| {
+                if item.item_type != aviutl2::generic::EffectItemType::Number {
+                    return;
                 }
-            }
+                // NOTE:
+                // エフェクトごとのカウンターとかが面倒なのでEffectItemはitem_typeのチェックでしか使わない
+                let Some(value) = object.get_value(&item.name) else {
+                    tracing::error!(
+                        "Failed to get value for effect item {:?} in effect {:?}",
+                        item.name,
+                        effect_name
+                    );
+                    return;
+                };
+                if let Some(params) = crate::KeyframeTrackParams::parse(value) {
+                    // let keyframe_info = KeyframeTrackInfo {
+                    //     name: key.to_string(),
+                    //     params,
+                    // };
+                    // effect_info.keyframe_tracks.push(keyframe_info);
+                    effect_info
+                        .keyframe_tracks
+                        .entry(params)
+                        .or_insert_with(|| KeyframeTrackInfo { names: Vec::new() })
+                        .names
+                        .push(item.name.to_string());
+                }
+            })?;
             effects.push(effect_info);
         }
 
