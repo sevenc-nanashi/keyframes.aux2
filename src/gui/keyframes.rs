@@ -176,17 +176,17 @@ impl KeyframesGui {
         effect: &EffectInfo,
         params: &crate::KeyframeTrackParams,
         track: &KeyframeTrackInfo,
-        keyframes: &crate::curve::Keyframes,
+        keyframes: &crate::keyframe::Keyframes,
         sections: &[(usize, f32, f32)],
         selected_object_color: egui::Color32,
     ) {
-        let crate::curve::Keyframe::Easing(ref initial_kf_info) = keyframes.keyframes[0] else {
+        let crate::keyframe::Keyframe::Easing(ref initial_kf_info) = keyframes.keyframes[0] else {
             unreachable!();
         };
         let mut kf_info = initial_kf_info;
 
         for section in sections {
-            if let crate::curve::Keyframe::Easing(ref new_kf_info) = keyframes.keyframes[section.0]
+            if let crate::keyframe::Keyframe::Easing(ref new_kf_info) = keyframes.keyframes[section.0]
             {
                 kf_info = new_kf_info;
             }
@@ -234,7 +234,7 @@ impl KeyframesGui {
         rect
     }
 
-    fn easing_hover_text(kf_info: &crate::curve::EasingKeyframeInfo) -> String {
+    fn easing_hover_text(kf_info: &crate::keyframe::EasingKeyframeInfo) -> String {
         if kf_info.params.is_empty() {
             return kf_info.easing.clone();
         }
@@ -256,7 +256,7 @@ impl KeyframesGui {
         effect: &EffectInfo,
         track: &KeyframeTrackInfo,
         section_index: usize,
-        new_keyframes: crate::curve::Keyframes,
+        new_keyframes: crate::keyframe::Keyframes,
     ) {
         tracing::info!(
             "Updating keyframe {:?} of track {:?} in effect {:?} to {:?}",
@@ -317,7 +317,7 @@ impl KeyframesGui {
         painter: &egui::Painter,
         track_rect: egui::Rect,
         object: &SelectedObjectInfo,
-        keyframes: &crate::curve::Keyframes,
+        keyframes: &crate::keyframe::Keyframes,
         total_frames: usize,
     ) {
         for (i, frame) in object.frames.iter().enumerate() {
@@ -325,8 +325,8 @@ impl KeyframesGui {
                 continue;
             }
             let easing = match keyframes.keyframes[i] {
-                crate::curve::Keyframe::Easing(ref easing) => easing.easing.as_str(),
-                crate::curve::Keyframe::Midpoint => "〃",
+                crate::keyframe::Keyframe::Easing(ref easing) => easing.easing.as_str(),
+                crate::keyframe::Keyframe::Midpoint => "〃",
                 _ => continue,
             };
             let left_position = (*frame - object.frames[0]) as f32 / total_frames as f32;
@@ -362,7 +362,7 @@ impl KeyframesGui {
         painter: &egui::Painter,
         track_rect: egui::Rect,
         object: &SelectedObjectInfo,
-        keyframes: &crate::curve::Keyframes,
+        keyframes: &crate::keyframe::Keyframes,
         total_frames: usize,
     ) {
         for (i, frame) in object.frames.iter().enumerate() {
@@ -373,7 +373,7 @@ impl KeyframesGui {
             let mut rect = track_rect;
             rect.set_left(rect.left() + position * track_rect.width() - 1.0);
             rect.set_right(rect.left() + 1.0);
-            let color = if matches!(keyframes.keyframes[i], crate::curve::Keyframe::Ignored) {
+            let color = if matches!(keyframes.keyframes[i], crate::keyframe::Keyframe::Ignored) {
                 GUI_COLORS.object_section_ignored
             } else {
                 GUI_COLORS.object_section
@@ -455,19 +455,19 @@ impl KeyframesGui {
     fn show_easing_menu(
         &mut self,
         ui: &mut egui::Ui,
-        keyframes: &crate::curve::Keyframes,
+        keyframes: &crate::keyframe::Keyframes,
         params: &crate::KeyframeTrackParams,
         object: &SelectedObjectInfo,
         effect: &EffectInfo,
         track: &KeyframeTrackInfo,
         index: usize,
         current_level: &str,
-        update_keyframe: impl FnOnce(crate::curve::Keyframes),
+        update_keyframe: impl FnOnce(crate::keyframe::Keyframes),
     ) {
         let default = indexmap::IndexMap::new();
         let easings = crate::EASINGS.get().unwrap_or(&default);
         let mut update_keyframe_once = Some(update_keyframe);
-        let mut update_keyframe = |new_keyframes: crate::curve::Keyframes| {
+        let mut update_keyframe = |new_keyframes: crate::keyframe::Keyframes| {
             if let Some(f) = update_keyframe_once.take() {
                 f(new_keyframes);
             }
@@ -478,12 +478,12 @@ impl KeyframesGui {
             .iter()
             .enumerate()
             .take(index + 1)
-            .rfind(|(_, k)| matches!(k, crate::curve::Keyframe::Easing(_)))
+            .rfind(|(_, k)| matches!(k, crate::keyframe::Keyframe::Easing(_)))
             .expect(
                 "少なくとも0フレーム目にはイージングが設定されているはずなので、必ず見つかるはず",
             );
         let keyframe_index = *keyframe_index;
-        let crate::curve::Keyframe::Easing(current_keyframe) = current_keyframe else {
+        let crate::keyframe::Keyframe::Easing(current_keyframe) = current_keyframe else {
             unreachable!();
         };
         let current_easing = easings.get(&current_keyframe.easing);
@@ -513,10 +513,10 @@ impl KeyframesGui {
 
     fn show_midpoint_actions(
         ui: &mut egui::Ui,
-        keyframes: &crate::curve::Keyframes,
+        keyframes: &crate::keyframe::Keyframes,
         index: usize,
         current_level: &str,
-        update_keyframe: &mut impl FnMut(crate::curve::Keyframes),
+        update_keyframe: &mut impl FnMut(crate::keyframe::Keyframes),
     ) {
         if !current_level.is_empty() || index == 0 {
             return;
@@ -524,12 +524,12 @@ impl KeyframesGui {
 
         if ui.button("引き継ぎ").clicked() {
             let mut new_keyframes = keyframes.clone();
-            new_keyframes.keyframes[index] = crate::curve::Keyframe::Midpoint;
+            new_keyframes.keyframes[index] = crate::keyframe::Keyframe::Midpoint;
             update_keyframe(new_keyframes);
         }
         if ui.button("無視").clicked() {
             let mut new_keyframes = keyframes.clone();
-            new_keyframes.keyframes[index] = crate::curve::Keyframe::Ignored;
+            new_keyframes.keyframes[index] = crate::keyframe::Keyframe::Ignored;
             update_keyframe(new_keyframes);
         }
         ui.separator();
@@ -539,17 +539,17 @@ impl KeyframesGui {
     fn show_current_easing_options(
         &mut self,
         ui: &mut egui::Ui,
-        keyframes: &crate::curve::Keyframes,
+        keyframes: &crate::keyframe::Keyframes,
         params: &crate::KeyframeTrackParams,
         object: &SelectedObjectInfo,
         effect: &EffectInfo,
         track: &KeyframeTrackInfo,
         keyframe_index: usize,
-        current_keyframe: &crate::curve::EasingKeyframeInfo,
-        current_easing: &crate::curve::Easing,
+        current_keyframe: &crate::keyframe::EasingKeyframeInfo,
+        current_easing: &crate::keyframe::Easing,
         index: usize,
         current_level: &str,
-        update_keyframe: &mut impl FnMut(crate::curve::Keyframes),
+        update_keyframe: &mut impl FnMut(crate::keyframe::Keyframes),
     ) {
         if current_easing.has_speed {
             Self::show_speed_options(
@@ -586,15 +586,15 @@ impl KeyframesGui {
 
     fn show_speed_options(
         ui: &mut egui::Ui,
-        keyframes: &crate::curve::Keyframes,
+        keyframes: &crate::keyframe::Keyframes,
         keyframe_index: usize,
-        current_keyframe: &crate::curve::EasingKeyframeInfo,
-        update_keyframe: &mut impl FnMut(crate::curve::Keyframes),
+        current_keyframe: &crate::keyframe::EasingKeyframeInfo,
+        update_keyframe: &mut impl FnMut(crate::keyframe::Keyframes),
     ) {
         let mut current_acceleration = current_keyframe.acceleration;
         if ui.checkbox(&mut current_acceleration, "加速").changed() {
             let mut new_keyframes = keyframes.clone();
-            let crate::curve::Keyframe::Easing(ref mut k) = new_keyframes.keyframes[keyframe_index]
+            let crate::keyframe::Keyframe::Easing(ref mut k) = new_keyframes.keyframes[keyframe_index]
             else {
                 unreachable!();
             };
@@ -605,7 +605,7 @@ impl KeyframesGui {
         let mut current_deceleration = current_keyframe.deceleration;
         if ui.checkbox(&mut current_deceleration, "減速").changed() {
             let mut new_keyframes = keyframes.clone();
-            let crate::curve::Keyframe::Easing(ref mut k) = new_keyframes.keyframes[keyframe_index]
+            let crate::keyframe::Keyframe::Easing(ref mut k) = new_keyframes.keyframes[keyframe_index]
             else {
                 unreachable!();
             };
@@ -616,10 +616,10 @@ impl KeyframesGui {
 
     fn show_easing_choices(
         ui: &mut egui::Ui,
-        keyframes: &crate::curve::Keyframes,
+        keyframes: &crate::keyframe::Keyframes,
         index: usize,
-        easings: &indexmap::IndexMap<String, crate::curve::Easing>,
-        update_keyframe: &mut impl FnMut(crate::curve::Keyframes),
+        easings: &indexmap::IndexMap<String, crate::keyframe::Easing>,
+        update_keyframe: &mut impl FnMut(crate::keyframe::Keyframes),
     ) {
         for easing in easings.values() {
             if ui.button(&easing.name).clicked() {
@@ -630,18 +630,18 @@ impl KeyframesGui {
     }
 
     fn keyframes_with_easing(
-        keyframes: &crate::curve::Keyframes,
+        keyframes: &crate::keyframe::Keyframes,
         index: usize,
-        easing: &crate::curve::Easing,
-    ) -> crate::curve::Keyframes {
+        easing: &crate::keyframe::Easing,
+    ) -> crate::keyframe::Keyframes {
         let mut new_keyframes = keyframes.clone();
         new_keyframes.keyframes[index] =
-            crate::curve::Keyframe::Easing(crate::curve::EasingKeyframeInfo {
+            crate::keyframe::Keyframe::Easing(crate::keyframe::EasingKeyframeInfo {
                 easing: easing.name.clone(),
                 acceleration: easing.default_acceleration,
                 deceleration: easing.default_deceleration,
                 params: easing.params.values().cloned().collect(),
-                timecontrol: crate::curve::TimeControlBezier::default(),
+                timecontrol: crate::keyframe::TimeControlBezier::default(),
             });
 
         if easing.ignore_midpoints {
@@ -650,12 +650,12 @@ impl KeyframesGui {
         new_keyframes
     }
 
-    fn ignore_following_midpoints(keyframes: &mut crate::curve::Keyframes, index: usize) {
+    fn ignore_following_midpoints(keyframes: &mut crate::keyframe::Keyframes, index: usize) {
         for i in index + 1..keyframes.keyframes.len() {
-            if !matches!(keyframes.keyframes[i], crate::curve::Keyframe::Midpoint) {
+            if !matches!(keyframes.keyframes[i], crate::keyframe::Keyframe::Midpoint) {
                 break;
             }
-            keyframes.keyframes[i] = crate::curve::Keyframe::Ignored;
+            keyframes.keyframes[i] = crate::keyframe::Keyframe::Ignored;
         }
     }
 }

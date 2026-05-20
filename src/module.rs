@@ -40,20 +40,20 @@ impl KeyframesMod2 {
             .iter()
             .enumerate()
             .take(index + 1)
-            .rfind(|(_, k)| matches!(k, crate::curve::Keyframe::Easing(_)))
+            .rfind(|(_, k)| matches!(k, crate::keyframe::Keyframe::Easing(_)))
             .expect("first keyframe must be easing");
         let mut indices = vec![index as i32];
-        let crate::curve::Keyframe::Easing(keyframe) = keyframe else {
+        let crate::keyframe::Keyframe::Easing(keyframe) = keyframe else {
             unreachable!()
         };
         for i in (index + 1)..keyframes.keyframes.len() {
             match &keyframes.keyframes[i] {
-                crate::curve::Keyframe::Easing(_) => {
+                crate::keyframe::Keyframe::Easing(_) => {
                     indices.push(i as i32);
                     break;
                 }
-                crate::curve::Keyframe::Midpoint => indices.push(i as i32),
-                crate::curve::Keyframe::Ignored => (),
+                crate::keyframe::Keyframe::Midpoint => indices.push(i as i32),
+                crate::keyframe::Keyframe::Ignored => (),
             }
         }
         let easing = crate::EASINGS
@@ -89,9 +89,9 @@ impl KeyframesMod2 {
             .keyframes
             .iter()
             .take(index + 1)
-            .rfind(|k| matches!(k, crate::curve::Keyframe::Easing(_)))
+            .rfind(|k| matches!(k, crate::keyframe::Keyframe::Easing(_)))
             .expect("first keyframe must be easing");
-        let crate::curve::Keyframe::Easing(keyframe) = keyframe else {
+        let crate::keyframe::Keyframe::Easing(keyframe) = keyframe else {
             unreachable!()
         };
 

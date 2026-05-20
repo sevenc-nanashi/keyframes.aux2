@@ -19,7 +19,7 @@ pub(super) struct TimeControlEditorTarget {
     pub(super) effect_name: String,
     pub(super) effect_index: usize,
     pub(super) track_names: Vec<String>,
-    pub(super) timecontrol: crate::curve::TimeControlBezier,
+    pub(super) timecontrol: crate::keyframe::TimeControlBezier,
     pub(super) selected_point: usize,
     pub(super) context_menu_position: Option<[f64; 2]>,
     pub(super) dirty: bool,
@@ -424,7 +424,7 @@ impl KeyframesGui {
                     let num_sections = read.get_object_section_num(binding.object)?;
                     let num_keyframes = num_sections + 1;
                     let new_params = crate::KeyframeTrackParams::new();
-                    let keyframes = crate::curve::Keyframes::new(num_keyframes);
+                    let keyframes = crate::keyframe::Keyframes::new(num_keyframes);
                     crate::KEYFRAMES.insert(new_params, keyframes);
                     change_bindings.insert(binding.clone(), new_params);
                 } else {
@@ -437,7 +437,7 @@ impl KeyframesGui {
                                 effect_key
                             );
                             crate::KEYFRAMES
-                                .insert(*params, crate::curve::Keyframes::new(num_keyframes));
+                                .insert(*params, crate::keyframe::Keyframes::new(num_keyframes));
                             param_to_effect.insert(*params, effect_key);
                         }
                         Some(existing_keyframes)

@@ -3,7 +3,7 @@ use std::str::FromStr;
 use anyhow::Context;
 use aviutl2_eframe::egui::TextBuffer;
 
-mod curve;
+mod keyframe;
 mod gui;
 mod module;
 
@@ -15,7 +15,7 @@ struct KeyframesAux2 {
 
 pub static EFFECTS: std::sync::LazyLock<dashmap::DashMap<String, aviutl2::generic::Effect>> =
     std::sync::LazyLock::new(dashmap::DashMap::new);
-pub static EASINGS: std::sync::OnceLock<indexmap::IndexMap<String, crate::curve::Easing>> =
+pub static EASINGS: std::sync::OnceLock<indexmap::IndexMap<String, crate::keyframe::Easing>> =
     std::sync::OnceLock::new();
 pub static EDIT_HANDLE: aviutl2::generic::GlobalEditHandle =
     aviutl2::generic::GlobalEditHandle::new();
@@ -23,7 +23,7 @@ pub static OBJECT_ID_TO_HANDLE: std::sync::LazyLock<
     dashmap::DashMap<usize, aviutl2::generic::ObjectHandle>,
 > = std::sync::LazyLock::new(dashmap::DashMap::new);
 pub static KEYFRAMES: std::sync::LazyLock<
-    dashmap::DashMap<KeyframeTrackParams, crate::curve::Keyframes>,
+    dashmap::DashMap<KeyframeTrackParams, crate::keyframe::Keyframes>,
 > = std::sync::LazyLock::new(dashmap::DashMap::new);
 pub static CURRENT_BANK: std::sync::LazyLock<std::sync::Mutex<usize>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(1));
@@ -172,7 +172,7 @@ impl aviutl2::generic::GenericPlugin for KeyframesAux2 {
             let mut current_bank = CURRENT_BANK.lock().unwrap();
             *current_bank = last_bank_id + 1;
         }
-        let keyframes: Vec<(KeyframeTrackParams, crate::curve::Keyframes)> =
+        let keyframes: Vec<(KeyframeTrackParams, crate::keyframe::Keyframes)> =
             project.deserialize("keyframes").unwrap_or_default();
         KEYFRAMES.clear();
         for (params, keyframes) in keyframes.into_iter() {
@@ -189,7 +189,7 @@ impl aviutl2::generic::GenericPlugin for KeyframesAux2 {
         let _ = EDIT_HANDLE.call_read_section(|read| {
             clear_unused_keyframes(&info, read);
         });
-        let keyframes: Vec<(KeyframeTrackParams, crate::curve::Keyframes)> = KEYFRAMES
+        let keyframes: Vec<(KeyframeTrackParams, crate::keyframe::Keyframes)> = KEYFRAMES
             .iter()
             .map(|entry| (*entry.key(), entry.value().clone()))
             .collect();
@@ -244,7 +244,7 @@ fn load_effects() -> anyhow::Result<()> {
     tracing::info!("Loading easings...");
     let mut easings = vec![];
     let standard_easings =
-        crate::curve::Easing::from_multi_script(include_str!("../build/@embedded.tra2"));
+        crate::keyframe::Easing::from_multi_script(include_str!("../build/@embedded.tra2"));
     tracing::info!("Loaded standard easings: {}", standard_easings.len());
     easings.extend(standard_easings);
 
@@ -254,7 +254,7 @@ fn load_effects() -> anyhow::Result<()> {
         .unwrap()
         .join("script.tra2");
     if let Ok(content) = std::fs::read_to_string(bundled_easings) {
-        let bundled_easings = crate::curve::Easing::from_multi_script(&content);
+        let bundled_easings = crate::keyframe::Easing::from_multi_script(&content);
         for easing in &bundled_easings {
             tracing::info!("Loaded bundled easing: {}", &easing.name);
         }
@@ -333,7 +333,7 @@ fn load_effects() -> anyhow::Result<()> {
             .starts_with('@');
         let content_starts_with_at = encoded.trim_start().starts_with('@');
         if file_name_starts_with_at || content_starts_with_at {
-            let scripts = crate::curve::Easing::from_multi_script(&encoded);
+            let scripts = crate::keyframe::Easing::from_multi_script(&encoded);
             for mut script in scripts {
                 if file_name_starts_with_at {
                     tracing::info!(
@@ -349,7 +349,7 @@ fn load_effects() -> anyhow::Result<()> {
                 easings.push(script);
             }
         } else {
-            let mut easing = crate::curve::Easing::from_script(&file_stem, &encoded);
+            let mut easing = crate::keyframe::Easing::from_script(&file_stem, &encoded);
             tracing::info!("Loaded easing from script file: {}", file_stem);
             easing.label = easing.label.or_else(|| label.clone());
             easings.push(easing);

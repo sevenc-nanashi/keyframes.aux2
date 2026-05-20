@@ -5,7 +5,7 @@ use aviutl2_eframe::egui;
 impl KeyframesGui {
     fn update_track_keyframes_by_target(
         target: &TimeControlEditorTarget,
-        new_keyframes: crate::curve::Keyframes,
+        new_keyframes: crate::keyframe::Keyframes,
     ) -> Option<crate::KeyframeTrackParams> {
         tracing::info!(
             "Updating time control keyframe {:?} of track {:?} in effect {:?} to {:?}",
@@ -65,7 +65,7 @@ impl KeyframesGui {
             }
         };
         let keyframe = match keyframes.keyframes.get(target.keyframe_index) {
-            Some(crate::curve::Keyframe::Easing(kf_info)) => kf_info,
+            Some(crate::keyframe::Keyframe::Easing(kf_info)) => kf_info,
             _ => {
                 self.timecontrol_editor = None;
                 return;
@@ -114,7 +114,7 @@ impl KeyframesGui {
                 self.timecontrol_editor = None;
                 return;
             };
-            let Some(crate::curve::Keyframe::Easing(kf_info)) =
+            let Some(crate::keyframe::Keyframe::Easing(kf_info)) =
                 new_keyframes.keyframes.get_mut(target.keyframe_index)
             else {
                 self.timecontrol_editor = None;
@@ -133,7 +133,7 @@ impl KeyframesGui {
 
     fn show_timecontrol_bezier_editor(
         ui: &mut egui::Ui,
-        timecontrol: &mut crate::curve::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControlBezier,
         selected_point: &mut usize,
         context_menu_position: &mut Option<[f64; 2]>,
     ) -> (bool, bool) {
@@ -389,7 +389,7 @@ impl KeyframesGui {
 
     fn show_timecontrol_anchor_menu(
         ui: &mut egui::Ui,
-        timecontrol: &mut crate::curve::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControlBezier,
         selected_point: &mut usize,
         add_point_position: [f64; 2],
     ) -> bool {
@@ -419,7 +419,7 @@ impl KeyframesGui {
     }
 
     fn insert_timecontrol_point(
-        timecontrol: &mut crate::curve::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControlBezier,
         position: [f64; 2],
     ) -> usize {
         let x = position[0].clamp(0.0, 1.0);
@@ -444,7 +444,7 @@ impl KeyframesGui {
     }
 
     fn remove_timecontrol_point(
-        timecontrol: &mut crate::curve::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControlBezier,
         selected_point: &mut usize,
     ) {
         let remove_index = *selected_point;
@@ -457,7 +457,7 @@ impl KeyframesGui {
 
     fn show_timecontrol_handle_menu(
         ui: &mut egui::Ui,
-        timecontrol: &mut crate::curve::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControlBezier,
         selected_point: &mut usize,
     ) -> bool {
         let mut changed = false;
@@ -498,7 +498,7 @@ impl KeyframesGui {
     }
 
     fn clamped_timecontrol_anchor_position(
-        timecontrol: &crate::curve::TimeControlBezier,
+        timecontrol: &crate::keyframe::TimeControlBezier,
         point_index: usize,
         position: [f64; 2],
     ) -> [f64; 2] {
@@ -519,7 +519,7 @@ impl KeyframesGui {
     const TIMECONTROL_MIN_ANCHOR_DISTANCE: f64 = 0.001;
 
     fn move_timecontrol_anchor(
-        timecontrol: &mut crate::curve::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControlBezier,
         point_index: usize,
         position: [f64; 2],
     ) -> bool {
@@ -577,7 +577,7 @@ impl KeyframesGui {
         true
     }
 
-    fn constrain_all_timecontrol_handles(timecontrol: &mut crate::curve::TimeControlBezier) {
+    fn constrain_all_timecontrol_handles(timecontrol: &mut crate::keyframe::TimeControlBezier) {
         for point_index in 0..timecontrol.points.len() {
             if let Some(in_handle) = timecontrol.points[point_index].in_handle {
                 timecontrol.points[point_index].in_handle =
@@ -601,7 +601,7 @@ impl KeyframesGui {
     }
 
     fn constrain_timecontrol_handle_position(
-        timecontrol: &crate::curve::TimeControlBezier,
+        timecontrol: &crate::keyframe::TimeControlBezier,
         point_index: usize,
         handle_kind: TimeControlHandleKind,
         handle: [f64; 2],
@@ -630,7 +630,7 @@ impl KeyframesGui {
     }
 
     fn clamped_timecontrol_handle_x(
-        timecontrol: &crate::curve::TimeControlBezier,
+        timecontrol: &crate::keyframe::TimeControlBezier,
         point_index: usize,
         handle_kind: TimeControlHandleKind,
         x: f64,
@@ -663,7 +663,7 @@ impl KeyframesGui {
     }
 
     fn mirror_timecontrol_handle(
-        timecontrol: &mut crate::curve::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControlBezier,
         point_index: usize,
         moved_out_handle: bool,
     ) {
@@ -707,7 +707,7 @@ impl KeyframesGui {
     }
 
     fn reset_timecontrol_handles(
-        timecontrol: &mut crate::curve::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControlBezier,
         point_index: usize,
     ) {
         let position = timecontrol.points[point_index].position;
@@ -763,7 +763,7 @@ impl KeyframesGui {
             .clone();
         self.timecontrol_editor.as_mut().unwrap().timecontrol =
             match keyframes.keyframes[target.keyframe_index] {
-                crate::curve::Keyframe::Easing(ref easing) => easing.timecontrol.clone(),
+                crate::keyframe::Keyframe::Easing(ref easing) => easing.timecontrol.clone(),
                 _ => anyhow::bail!("Target keyframe is not easing"),
             };
         Ok(())
