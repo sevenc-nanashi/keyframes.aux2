@@ -15,12 +15,9 @@ impl KeyframesGui {
                         .color(
                             if crate::module::DEBUG_MODE.load(std::sync::atomic::Ordering::Relaxed)
                             {
-                                aviutl2::config::get_color_code("LogWarn")
-                                    .expect("Null文字はない")
-                                    .expect("そもそもこれが落ちるなら本体も落ちる")
-                                    .pipe(|(r, g, b)| egui::Color32::from_rgb(r, g, b))
+                                GUI_COLORS.log_warn
                             } else {
-                                ui.visuals().widgets.noninteractive.fg_stroke.color
+                                GUI_COLORS.text
                             },
                         ),
                 )
@@ -128,14 +125,7 @@ impl KeyframesGui {
             &keyframes,
             total_frames,
         );
-        self.render_midpoint_lines(
-            ui,
-            &painter,
-            response.rect,
-            object,
-            &keyframes,
-            total_frames,
-        );
+        self.render_midpoint_lines(&painter, response.rect, object, &keyframes, total_frames);
         self.render_frame_cursor(&painter, info, object, response.rect, total_frames);
     }
 
@@ -351,7 +341,7 @@ impl KeyframesGui {
                 0.0,
                 egui::TextFormat {
                     font_id: egui::FontId::default(),
-                    color: ui.visuals().widgets.noninteractive.fg_stroke.color,
+                    color: GUI_COLORS.text,
                     ..Default::default()
                 },
             );
@@ -362,14 +352,13 @@ impl KeyframesGui {
                     pos.y -= galley.size().y / 2.0;
                 }),
                 galley,
-                ui.visuals().widgets.noninteractive.fg_stroke.color,
+                GUI_COLORS.text,
             );
         }
     }
 
     fn render_midpoint_lines(
         &self,
-        ui: &egui::Ui,
         painter: &egui::Painter,
         track_rect: egui::Rect,
         object: &SelectedObjectInfo,
@@ -385,13 +374,9 @@ impl KeyframesGui {
             rect.set_left(rect.left() + position * track_rect.width() - 1.0);
             rect.set_right(rect.left() + 1.0);
             let color = if matches!(keyframes.keyframes[i], crate::curve::Keyframe::Ignored) {
-                ui.visuals()
-                    .widgets
-                    .noninteractive
-                    .bg_fill
-                    .linear_multiply(0.25)
+                GUI_COLORS.object_section_ignored
             } else {
-                ui.visuals().widgets.noninteractive.bg_fill
+                GUI_COLORS.object_section
             };
             painter.rect_filled(rect, 0.0, color);
         }
@@ -413,11 +398,7 @@ impl KeyframesGui {
             let mut rect = track_rect;
             rect.set_left(rect.left() + position * track_rect.width() - 1.0);
             rect.set_right(rect.left() + 1.0);
-            let selected_line = aviutl2::config::get_color_code("FrameCursor")
-                .expect("Null文字はない")
-                .expect("そもそもこれが落ちるなら本体も落ちる")
-                .pipe(|(r, g, b)| egui::Color32::from_rgb(r, g, b));
-            painter.rect_filled(rect, 0.0, selected_line);
+            painter.rect_filled(rect, 0.0, GUI_COLORS.frame_cursor);
         }
     }
 

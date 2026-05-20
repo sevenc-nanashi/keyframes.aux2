@@ -34,7 +34,7 @@ impl KeyframesMod2 {
         };
         let keyframes = crate::KEYFRAMES
             .get(&param)
-            .context("keyframes not found")?;
+            .with_context(|| format!("keyframes not found for bank_id: {}, track_id: {}", bank_id, track_id))?;
         let (index, keyframe) = keyframes
             .keyframes
             .iter()

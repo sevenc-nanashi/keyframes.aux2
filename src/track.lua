@@ -3,8 +3,18 @@
 
 local mod = obj.module("keyframes.aux2")
 local bank_id, keyframe_id = obj.getpoint("param")
-local index, _ratio = math.modf(obj.getpoint("index"))
+local index, ratio = math.modf(obj.getpoint("index"))
 local inspect = mod.debug_mode()
+
+if bank_id == 0 then
+  if inspect then
+    print("== Keyframe Track Debug Info ==")
+    print("Bank ID is 0, falling back to linear track")
+  end
+  local left = obj.getpoint(index)
+  local right = obj.getpoint(index + 1)
+  return left + (right - left) * ratio
+end
 
 local indices, script_name, script, accelerate, decelerate, params = mod.get_keyframe(bank_id, keyframe_id, index)
 

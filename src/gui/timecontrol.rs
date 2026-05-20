@@ -57,13 +57,40 @@ impl KeyframesGui {
         let Some(mut target) = self.timecontrol_editor.clone() else {
             return;
         };
+        let keyframes = match crate::KEYFRAMES.get(&target.params) {
+            Some(keyframes) => keyframes,
+            None => {
+                self.timecontrol_editor = None;
+                return;
+            }
+        };
+        let keyframe = match keyframes.keyframes.get(target.keyframe_index) {
+            Some(crate::curve::Keyframe::Easing(kf_info)) => kf_info,
+            _ => {
+                self.timecontrol_editor = None;
+                return;
+            }
+        };
 
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             if ui.button("戻る").clicked() {
                 self.timecontrol_editor = None;
             }
-            ui.label(egui::RichText::new("時間制御").strong());
+            ui.label(format!(
+                "時間制御：{} / {} / {}",
+                target.effect_name,
+                if target.track_names.len() == 1 {
+                    target.track_names[0].clone()
+                } else {
+                    format!(
+                        "{} + {}",
+                        target.track_names[0],
+                        target.track_names.len() - 1
+                    )
+                },
+                keyframe.easing
+            ));
         });
         ui.separator();
 
@@ -149,15 +176,7 @@ impl KeyframesGui {
             }
         });
 
-        let grid_stroke = egui::Stroke::new(
-            1.0,
-            ui.visuals()
-                .widgets
-                .noninteractive
-                .fg_stroke
-                .color
-                .linear_multiply(0.25),
-        );
+        let grid_stroke = egui::Stroke::new(1.0, GUI_COLORS.grid_line);
         let graph_rect = egui::Rect::from_min_max(to_screen([0.0, 1.0]), to_screen([1.0, 0.0]));
         painter.rect_stroke(graph_rect, 0.0, grid_stroke, egui::StrokeKind::Inside);
         for i in 1..4 {
@@ -187,15 +206,20 @@ impl KeyframesGui {
             );
         }
 
-        let control_stroke = egui::Stroke::new(
-            1.0,
-            ui.visuals()
-                .widgets
-                .noninteractive
-                .fg_stroke
-                .color
-                .linear_multiply(0.5),
-        );
+        let curve_color = GUI_COLORS.zoom_gauge;
+        let curve_stroke = egui::Stroke::new(2.0, curve_color);
+        for segment_index in 0..timecontrol.points.len().saturating_sub(1) {
+            let mut previous = to_screen(timecontrol.points[segment_index].position);
+            for i in 1..=24 {
+                let t = i as f64 / 24.0;
+                let point = timecontrol.segment_point_at(segment_index, t);
+                let current = to_screen(point);
+                painter.line_segment([previous, current], curve_stroke);
+                previous = current;
+            }
+        }
+
+        let control_stroke = egui::Stroke::new(1.0, GUI_COLORS.anchor_line);
         for segment_index in 0..timecontrol.points.len().saturating_sub(1) {
             let start = to_screen(timecontrol.points[segment_index].position);
             let end = to_screen(timecontrol.points[segment_index + 1].position);
@@ -211,19 +235,6 @@ impl KeyframesGui {
             );
             painter.line_segment([start, out_handle], control_stroke);
             painter.line_segment([in_handle, end], control_stroke);
-        }
-
-        let curve_color = ui.visuals().widgets.active.fg_stroke.color;
-        let curve_stroke = egui::Stroke::new(2.0, curve_color);
-        for segment_index in 0..timecontrol.points.len().saturating_sub(1) {
-            let mut previous = to_screen(timecontrol.points[segment_index].position);
-            for i in 1..=24 {
-                let t = i as f64 / 24.0;
-                let point = timecontrol.segment_point_at(segment_index, t);
-                let current = to_screen(point);
-                painter.line_segment([previous, current], curve_stroke);
-                previous = current;
-            }
         }
 
         for point_index in 0..timecontrol.points.len() {
@@ -292,9 +303,9 @@ impl KeyframesGui {
                 }
                 commit_requested |= handle_response.drag_stopped();
                 let color = if handle_response.hovered() || handle_response.dragged() {
-                    ui.visuals().widgets.hovered.fg_stroke.color
+                    GUI_COLORS.anchor_hover
                 } else {
-                    curve_color
+                    GUI_COLORS.anchor
                 };
                 painter.circle_filled(handle_pos, 4.0, color.linear_multiply(0.85));
                 handle_response.context_menu(|ui| {
@@ -346,9 +357,9 @@ impl KeyframesGui {
                 || handle_response.dragged()
                 || point_index == *selected_point
             {
-                ui.visuals().selection.bg_fill
+                GUI_COLORS.anchor_select
             } else {
-                curve_color
+                GUI_COLORS.anchor
             };
             // painter.circle_filled(point, 5.0, color);
             painter.rect_filled(

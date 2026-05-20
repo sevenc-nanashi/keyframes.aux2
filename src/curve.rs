@@ -3,8 +3,8 @@ pub struct Keyframes {
     pub keyframes: Vec<Keyframe>,
 }
 impl Keyframes {
-    pub fn new(num_sections: usize) -> Self {
-        let mut keyframes = vec![Keyframe::default(); num_sections];
+    pub fn new(num_keyframes: usize) -> Self {
+        let mut keyframes = vec![Keyframe::default(); num_keyframes];
         keyframes[0] = Keyframe::Easing(EasingKeyframeInfo::default());
         Self { keyframes }
     }

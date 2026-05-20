@@ -71,36 +71,100 @@ pub struct KeyframeTrackInfo {
     pub(super) names: Vec<String>,
 }
 
-pub(super) fn get_colors(object_type: &EffectType) -> (Vec<egui::Color32>, egui::Color32) {
-    let (normal, selected) = match object_type {
-        EffectType::Control => ("ObjectControl", "ObjectControlSelect"),
-        EffectType::VideoInput => ("ObjectVideo", "ObjectVideoSelect"),
-        EffectType::VideoEffect => ("ObjectVideoEffect", "ObjectVideoEffectSelect"),
-        EffectType::VideoFilter => ("ObjectVideoFilter", "ObjectVideoFilterSelect"),
-        EffectType::AudioInput => ("ObjectAudio", "ObjectAudioSelect"),
-        EffectType::AudioEffect => ("ObjectAudioEffect", "ObjectAudioEffectSelect"),
-        EffectType::AudioFilter => ("ObjectAudioFilter", "ObjectAudioFilterSelect"),
-    };
-    let normal_color =
-        aviutl2::config::get_all_color_codes(normal).expect("そもそもこれが落ちるなら本体も落ちる");
-    let selected_color = aviutl2::config::get_color_code(selected)
-        .expect("Null文字はない")
-        .expect("そもそもこれが落ちるなら本体も落ちる");
-    let selected_color =
-        egui::Color32::from_rgb(selected_color.0, selected_color.1, selected_color.2);
-    if normal_color.len() == 1 {
-        let normal_color =
-            egui::Color32::from_rgb(normal_color[0].0, normal_color[0].1, normal_color[0].2);
-        (vec![normal_color, normal_color], selected_color)
-    } else {
-        (
-            normal_color
-                .into_iter()
-                .map(|(r, g, b)| egui::Color32::from_rgb(r, g, b))
-                .collect(),
-            selected_color,
-        )
+pub(super) struct GuiColors {
+    text: egui::Color32,
+    log_warn: egui::Color32,
+    frame_cursor: egui::Color32,
+    grid_line: egui::Color32,
+    zoom_gauge: egui::Color32,
+    anchor: egui::Color32,
+    anchor_line: egui::Color32,
+    anchor_hover: egui::Color32,
+    anchor_select: egui::Color32,
+    object_section: egui::Color32,
+    object_section_ignored: egui::Color32,
+    object_control: ObjectColors,
+    object_video: ObjectColors,
+    object_video_effect: ObjectColors,
+    object_video_filter: ObjectColors,
+    object_audio: ObjectColors,
+    object_audio_effect: ObjectColors,
+    object_audio_filter: ObjectColors,
+}
+
+#[derive(Clone)]
+pub(super) struct ObjectColors {
+    normal: Vec<egui::Color32>,
+    selected: egui::Color32,
+}
+
+pub(super) static GUI_COLORS: std::sync::LazyLock<GuiColors> =
+    std::sync::LazyLock::new(GuiColors::load);
+
+impl GuiColors {
+    fn load() -> Self {
+        Self {
+            text: color_code("Text"),
+            log_warn: color_code("LogWarn"),
+            frame_cursor: color_code("FrameCursor"),
+            grid_line: color_code("GridLine"),
+            zoom_gauge: color_code("ZoomGauge"),
+            anchor: color_code("Anchor"),
+            anchor_line: color_code("AnchorLine"),
+            anchor_hover: color_code("AnchorHover"),
+            anchor_select: color_code("AnchorSelect"),
+            object_section: color_code("ObjectSection"),
+            object_section_ignored: color_code("Background"),
+            object_control: object_colors("ObjectControl", "ObjectControlSelect"),
+            object_video: object_colors("ObjectVideo", "ObjectVideoSelect"),
+            object_video_effect: object_colors("ObjectVideoEffect", "ObjectVideoEffectSelect"),
+            object_video_filter: object_colors("ObjectVideoFilter", "ObjectVideoFilterSelect"),
+            object_audio: object_colors("ObjectAudio", "ObjectAudioSelect"),
+            object_audio_effect: object_colors("ObjectAudioEffect", "ObjectAudioEffectSelect"),
+            object_audio_filter: object_colors("ObjectAudioFilter", "ObjectAudioFilterSelect"),
+        }
     }
+}
+
+fn color_code(key: &str) -> egui::Color32 {
+    aviutl2::config::get_color_code(key)
+        .expect("Null文字はない")
+        .unwrap_or_else(|| panic!("{key} が style.conf に存在しない"))
+        .pipe(|(r, g, b)| egui::Color32::from_rgb(r, g, b))
+}
+
+fn color_codes(key: &str) -> Vec<egui::Color32> {
+    aviutl2::config::get_all_color_codes(key)
+        .unwrap_or_else(|_| panic!("{key} が style.conf に存在しない"))
+        .into_iter()
+        .map(|(r, g, b)| egui::Color32::from_rgb(r, g, b))
+        .collect()
+}
+
+fn object_colors(normal: &str, selected: &str) -> ObjectColors {
+    let normal = color_codes(normal);
+    let normal = if normal.len() == 1 {
+        vec![normal[0], normal[0]]
+    } else {
+        normal
+    };
+    ObjectColors {
+        normal,
+        selected: color_code(selected),
+    }
+}
+
+pub(super) fn get_colors(object_type: &EffectType) -> (Vec<egui::Color32>, egui::Color32) {
+    let colors = match object_type {
+        EffectType::Control => &GUI_COLORS.object_control,
+        EffectType::VideoInput => &GUI_COLORS.object_video,
+        EffectType::VideoEffect => &GUI_COLORS.object_video_effect,
+        EffectType::VideoFilter => &GUI_COLORS.object_video_filter,
+        EffectType::AudioInput => &GUI_COLORS.object_audio,
+        EffectType::AudioEffect => &GUI_COLORS.object_audio_effect,
+        EffectType::AudioFilter => &GUI_COLORS.object_audio_filter,
+    };
+    (colors.normal.clone(), colors.selected)
 }
 
 pub fn create_gui(
@@ -174,7 +238,7 @@ impl aviutl2_eframe::eframe::App for KeyframesGui {
                                 &track
                             );
                             let previous_params = crate::KeyframeTrackParams::parse(&track);
-                            if let Some(previous_params) = previous_params {
+                            if let Some(previous_params) = previous_params && previous_params.bank_id != 0 {
                                 resolved_migrations.insert(previous_params);
                             }
                             new_params.set_params(&mut track)?;
@@ -267,10 +331,7 @@ impl KeyframesGui {
             resolved_migrations.clear();
         }
 
-        let color = aviutl2::config::get_color_code("LogWarn")
-            .expect("Null文字はない")
-            .expect("そもそもこれが落ちるなら本体も落ちる")
-            .pipe(|(r, g, b)| egui::Color32::from_rgb(r, g, b));
+        let color = GUI_COLORS.log_warn;
 
         let mut layout = egui::text::LayoutJob::default();
         layout.append(
@@ -287,7 +348,7 @@ impl KeyframesGui {
             0.0,
             egui::TextFormat {
                 font_id: egui::FontId::default(),
-                color: ui.visuals().widgets.noninteractive.fg_stroke.color,
+                color: GUI_COLORS.text,
                 ..Default::default()
             },
         );
@@ -360,7 +421,11 @@ impl KeyframesGui {
                         params,
                         effect_key
                     );
+                    let num_sections = read.get_object_section_num(binding.object)?;
+                    let num_keyframes = num_sections + 1;
                     let new_params = crate::KeyframeTrackParams::new();
+                    let keyframes = crate::curve::Keyframes::new(num_keyframes);
+                    crate::KEYFRAMES.insert(new_params, keyframes);
                     change_bindings.insert(binding.clone(), new_params);
                 } else {
                     let num_keyframes = read.get_object_section_num(binding.object)? + 1;
