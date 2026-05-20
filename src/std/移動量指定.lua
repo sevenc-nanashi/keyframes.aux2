@@ -1,11 +1,12 @@
 --speed:0,0
 --twopoint
 
----$embed
-local curves = require("common")
+local num = obj.getpoint("num")
+local values = {}
+for i = 0, num - 1 do
+	values[i + 1] = obj.getpoint(i)
+end
 
-local ctx = curves.make_ctx()
-local values = curves.normalize_values(ctx.values or {}, ctx.divisor)
 if #values == 0 then
 	return 0.0
 end
@@ -13,4 +14,10 @@ if #values == 1 then
 	return values[1]
 end
 
-return values[1] + values[2] * (ctx.t or 0.0)
+local t = num <= 1 and 0.0 or math.max(0.0, math.min(1.0, obj.getpoint("index") / (num - 1)))
+local ok, timecontrol_value = pcall(obj.getpoint, "timecontrol", "value")
+if ok and timecontrol_value then
+	t = timecontrol_value
+end
+
+return values[1] + values[2] * t

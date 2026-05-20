@@ -3,7 +3,12 @@
 ---$embed
 local curves = require("common")
 
-local ctx = curves.make_ctx()
-local values = curves.normalize_values(ctx.values or {}, ctx.divisor)
-local segment = curves.resolve_segment(ctx, #values)
+local index, ratio = math.modf(obj.getpoint("index"))
+local num = obj.getpoint("num")
+local values = {}
+for i = 0, num - 1 do
+	values[i + 1] = obj.getpoint(i)
+end
+
+local segment = curves.resolve_segment(#values, index, ratio, nil)
 return values[segment + 1] or values[#values] or 0.0

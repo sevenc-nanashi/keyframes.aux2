@@ -1,6 +1,8 @@
 use anyhow::Context;
 use aviutl2::module::ScriptModuleFunctions;
 
+pub static DEBUG_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[aviutl2::plugin(ScriptModule)]
 pub struct KeyframesMod2 {}
 
@@ -40,10 +42,10 @@ impl KeyframesMod2 {
             .take(index + 1)
             .rfind(|(_, k)| matches!(k, crate::curve::Keyframe::Easing(_)))
             .expect("first keyframe must be easing");
+        let mut indices = vec![index as i32];
         let crate::curve::Keyframe::Easing(keyframe) = keyframe else {
             unreachable!()
         };
-        let mut indices = vec![index as i32];
         for i in (index + 1)..keyframes.keyframes.len() {
             match &keyframes.keyframes[i] {
                 crate::curve::Keyframe::Easing(_) => {
@@ -67,5 +69,9 @@ impl KeyframesMod2 {
             keyframe.deceleration,
             keyframe.params.clone(),
         ))
+    }
+
+    fn debug_mode(&self) -> bool {
+        DEBUG_MODE.load(std::sync::atomic::Ordering::Relaxed)
     }
 }

@@ -4,6 +4,7 @@
 local mod = obj.module("keyframes.aux2")
 local bank_id, keyframe_id = obj.getpoint("param")
 local index, _ratio = math.modf(obj.getpoint("index"))
+local inspect = mod.debug_mode()
 
 local indices, script_name, script, accelerate, decelerate, params = mod.get_keyframe(bank_id, keyframe_id, index)
 
@@ -65,6 +66,25 @@ inner_obj.getpoint = function(...)
     -- return unpack(ret)
   end
 end
+
+if inspect then
+  print("== Keyframe Track Debug Info ==")
+  print("Bank ID:", bank_id)
+  print("Keyframe ID:", keyframe_id)
+  print("Indices:", indices)
+  print("Script Name:", script_name)
+  print("Accelerate:", accelerate)
+  print("Decelerate:", decelerate)
+  print("Params:", params)
+  local original_getpoint = inner_obj.getpoint
+  inner_obj.getpoint = function(...)
+    local args = { ... }
+    local ret = { original_getpoint(unpack(args)) }
+    print("getpoint", args, "->", ret)
+    return unpack(ret)
+  end
+end
+
 inner_G.obj = inner_obj
 
 setmetatable(inner_obj, { __index = obj, __newindex = obj })

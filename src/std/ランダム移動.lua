@@ -10,7 +10,7 @@ local function random_unit(seed, index)
 	return obj.rand(0, RAND_MAX, seed + index * 65537, frame) / RAND_MAX
 end
 
-local function random_move_value(ctx, values)
+local function random_move_value(values, index, ratio)
 	if #values == 0 then
 		return 0.0
 	end
@@ -18,13 +18,13 @@ local function random_move_value(ctx, values)
 		return values[1]
 	end
 
-	local segment, t = curves.resolve_segment(ctx, #values)
+	local segment, t = curves.resolve_segment(#values, index, ratio, nil)
 	local base = values[1]
 	local span = values[#values] - base
-	local seed = ctx.seed or 0
+	local seed = 0
 
-	local function point(index)
-		return base + random_unit(seed, index) * span
+	local function point(point_index)
+		return base + random_unit(seed, point_index) * span
 	end
 
 	local p0 = point(segment)
@@ -35,5 +35,11 @@ local function random_move_value(ctx, values)
 	return curves.catmull_rom(p0, p1, p2, p3, 1.0, 1.0, 1.0, t)
 end
 
-local ctx = curves.make_ctx()
-return random_move_value(ctx, curves.normalize_values(ctx.values or {}, ctx.divisor))
+local index, ratio = math.modf(obj.getpoint("index"))
+local num = obj.getpoint("num")
+local values = {}
+for i = 0, num - 1 do
+	values[i + 1] = obj.getpoint(i)
+end
+
+return random_move_value(values, index, ratio)

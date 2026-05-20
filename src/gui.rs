@@ -4,6 +4,7 @@ use tap::prelude::*;
 
 pub struct KeyframesGui {
     selected_object_info: Option<SelectedObjectInfo>,
+    debug_counter: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -80,6 +81,7 @@ pub fn create_gui(
     cc.egui_ctx.set_fonts(aviutl2_eframe::aviutl2_fonts());
     Ok(Box::new(KeyframesGui {
         selected_object_info: None,
+        debug_counter: 0,
     }))
 }
 
@@ -327,12 +329,26 @@ impl KeyframesGui {
         Ok(())
     }
 
-    fn render_selected_object_info(&self, ui: &mut egui::Ui) {
+    fn render_selected_object_info(&mut self, ui: &mut egui::Ui) {
         let Some(selected_object_info) = &self.selected_object_info else {
             ui.label("No object selected");
             return;
         };
-        ui.label(format!("Selected Object: {}", selected_object_info.name));
+        // ui.label(format!("Selected Object: {}", selected_object_info.name));
+        if ui
+            .add(
+                egui::Label::new(format!("Selected Object: {}", selected_object_info.name))
+                    .sense(egui::Sense::click()),
+            )
+            .clicked()
+        {
+            self.debug_counter += 1;
+            if self.debug_counter >= 5 {
+                let debug_mode = self.debug_counter.is_multiple_of(2);
+                tracing::info!("Setting debug mode to {}", debug_mode);
+                crate::module::DEBUG_MODE.store(debug_mode, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
         let info = crate::EDIT_HANDLE.get_edit_info();
         for effect in &selected_object_info.effects {
             self.render_effect_info(ui, &info, selected_object_info, effect);
@@ -642,7 +658,7 @@ impl KeyframesGui {
                         let crate::curve::Keyframe::Easing(ref mut k) = new_keyframes.keyframes[keyframe_index] else {
                             unreachable!();
                         };
-                        k.acceleration = current_acceleration;
+                        k.deceleration = current_deceleration;
                         update_keyframe(new_keyframes);
                     }
                 }

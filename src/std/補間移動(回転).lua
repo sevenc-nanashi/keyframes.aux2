@@ -99,36 +99,64 @@ local function quat_squad_control(prev_q, cur_q, next_q)
 	return quat_normalize(quat_mul(cur_q, quat_exp(blend)))
 end
 
-local function rotation_interpolation_value(ctx, values, lengths)
-	local period = ctx.rotation_period or ctx.angle_period or 360.0
-	return curves.interpolation_value(ctx, curves.build_rotation_series(values, period), lengths)
+local function rotation_interpolation_value(values, lengths, segment, ratio, double_first, double_last)
+	return curves.interpolation_value(
+		curves.build_rotation_series(values, 360.0),
+		lengths,
+		segment,
+		ratio,
+		nil,
+		double_first,
+		double_last
+	)
 end
 
-local function interpolation_rotate_group_value(ctx, axes)
-	local segment, t = curves.resolve_segment(ctx, #axes[1])
-	local order = ctx.rotation_order or "xyz"
-	local q_prev = curves.euler_quat_at(axes, segment, order)
-	local q_cur = curves.euler_quat_at(axes, segment + 1, order)
-	local q_next = quat_align(q_cur, curves.euler_quat_at(axes, segment + 2, order))
+local function interpolation_rotate_group_value(axes, segment, ratio, axis_index)
+	segment, ratio = curves.resolve_segment(#axes[1], segment, ratio, nil)
+	local q_prev = curves.euler_quat_at(axes, segment, "xyz")
+	local q_cur = curves.euler_quat_at(axes, segment + 1, "xyz")
+	local q_next = quat_align(q_cur, curves.euler_quat_at(axes, segment + 2, "xyz"))
 	q_prev = quat_align(q_cur, q_prev)
-	local q_after = quat_align(q_next, curves.euler_quat_at(axes, segment + 3, order))
+	local q_after = quat_align(q_next, curves.euler_quat_at(axes, segment + 3, "xyz"))
 
 	local control_cur = quat_squad_control(q_prev, q_cur, q_next)
 	local control_next = quat_squad_control(q_cur, q_next, q_after)
 	local curve_cur = curves.quat_slerp(q_cur, control_cur, ROTATION_CONTROL_BLEND)
 	local curve_next = curves.quat_slerp(q_next, control_next, ROTATION_CONTROL_BLEND)
-	local curve = curves.quat_slerp(curve_cur, curve_next, t)
-	local linear = curves.quat_slerp(q_cur, q_next, t)
-	local blend = 4.0 * t * (1.0 - t)
-	return curves.rotation_component_from_quat(ctx, curves.quat_slerp(linear, curve, blend))
+	local curve = curves.quat_slerp(curve_cur, curve_next, ratio)
+	local linear = curves.quat_slerp(q_cur, q_next, ratio)
+	local blend = 4.0 * ratio * (1.0 - ratio)
+	return curves.rotation_component_from_quat(axis_index, "xyz", curves.quat_slerp(linear, curve, blend))
 end
 
-local ctx = curves.make_ctx()
-local rotation_group = curves.rotation_axes(ctx)
+local index, ratio = math.modf(obj.getpoint("index"))
+local num = obj.getpoint("num")
+local values = {}
+for i = 0, num - 1 do
+	values[i + 1] = obj.getpoint(i)
+end
+
+local link_index, link_count = obj.getpoint("link")
+link_index = link_index or 0
+link_count = link_count or 1
+
+local linked_values = nil
+if link_count > 1 then
+	linked_values = {}
+	for axis = 0, link_count - 1 do
+		local axis_values = {}
+		for i = 0, num - 1 do
+			axis_values[i + 1] = obj.getpoint(i, axis - link_index)
+		end
+		linked_values[axis + 1] = axis_values
+	end
+end
+
+local rotation_group = curves.rotation_axes(linked_values)
 if rotation_group then
-	return interpolation_rotate_group_value(ctx, rotation_group)
+	return interpolation_rotate_group_value(rotation_group, index, ratio, link_index + 1)
 end
 
-local axes = curves.collect_axes(ctx)
-local lengths = curves.segment_lengths(axes, curves.get_flags(ctx))
-return rotation_interpolation_value(ctx, curves.normalize_values(ctx.values or {}, ctx.divisor), lengths)
+local axes = curves.collect_axes(values, linked_values)
+local lengths = curves.segment_lengths(axes, obj.getpoint("accelerate"), obj.getpoint("decelerate"))
+return rotation_interpolation_value(values, lengths, index, ratio, obj.getpoint("accelerate"), obj.getpoint("decelerate"))

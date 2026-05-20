@@ -3,5 +3,11 @@
 ---$embed
 local curves = require("common")
 
-local ctx = curves.make_ctx()
-return curves.linear_value(ctx, curves.normalize_values(ctx.values or {}, ctx.divisor))
+local index, ratio = math.modf(obj.getpoint("index"))
+local num = obj.getpoint("num")
+local values = {}
+for i = 0, num - 1 do
+	values[i + 1] = obj.getpoint(i)
+end
+
+return curves.linear_value(values, index, ratio, nil, obj.getpoint("accelerate"), obj.getpoint("decelerate"))

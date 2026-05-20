@@ -26,36 +26,22 @@ local function smooth_edge_value(start_value, end_value, t, is_first_edge, is_la
 	return (left * t * 3.0 + s * start_value) * s * s + (right * s * 3.0 + t * end_value) * t * t
 end
 
-local function get_flags(ctx)
-	local flags = ctx.edge_flags or {}
-	return {
-		double_first = ctx.double_first or flags.double_first or false,
-		double_last = ctx.double_last or flags.double_last or false,
-	}
-end
-
-local function resolve_segment(ctx, point_count)
+local function resolve_segment(point_count, segment, local_t, t)
 	if point_count <= 1 then
 		return 0, 0.0
 	end
 
-	if ctx.segment ~= nil then
-		return clamp(ctx.segment, 0, point_count - 2), clamp(ctx.local_t or ctx.t or 0.0, 0.0, 1.0)
+	if segment ~= nil then
+		if segment >= point_count - 1 then
+			return point_count - 2, 1.0
+		end
+		return clamp(segment, 0, point_count - 2), clamp(local_t or t or 0.0, 0.0, 1.0)
 	end
 
-	local t = clamp(ctx.t or 0.0, 0.0, 1.0)
+	t = clamp(t or 0.0, 0.0, 1.0)
 	local scaled = t * (point_count - 1)
-	local segment = math.min(point_count - 2, math.floor(scaled))
+	segment = math.min(point_count - 2, math.floor(scaled))
 	return segment, scaled - segment
-end
-
-local function normalize_values(values, divisor)
-	divisor = divisor or 1.0
-	local out = {}
-	for i = 1, #values do
-		out[i] = values[i] / divisor
-	end
-	return out
 end
 
 local function deg_to_rad(value)
@@ -219,28 +205,28 @@ local function build_rotation_series(values, period)
 	return out
 end
 
-local function collect_axes(ctx)
-	if ctx.linked_values then
+local function collect_axes(values, linked_values)
+	if linked_values then
 		local axes = {}
-		for _, values in ipairs(ctx.linked_values) do
-			axes[#axes + 1] = normalize_values(values, ctx.divisor)
+		for _, axis_values in ipairs(linked_values) do
+			axes[#axes + 1] = axis_values
 		end
 		if #axes > 0 then
 			return axes
 		end
 	end
 
-	return { normalize_values(ctx.values or {}, ctx.divisor) }
+	return { values or {} }
 end
 
-local function rotation_axes(ctx)
-	if not ctx.linked_values or #ctx.linked_values ~= 3 then
+local function rotation_axes(linked_values)
+	if not linked_values or #linked_values ~= 3 then
 		return nil
 	end
 	return {
-		normalize_values(ctx.linked_values[1], ctx.divisor),
-		normalize_values(ctx.linked_values[2], ctx.divisor),
-		normalize_values(ctx.linked_values[3], ctx.divisor),
+		linked_values[1],
+		linked_values[2],
+		linked_values[3],
 	}
 end
 
@@ -250,13 +236,12 @@ local function euler_quat_at(axes, index, order)
 	return quat_from_euler_xyz(axes[1][i], axes[2][i], axes[3][i], order)
 end
 
-local function rotation_component_from_quat(ctx, quat)
-	local euler = quat_to_euler_xyz(quat, ctx.rotation_order or "xyz")
-	local axis_index = clamp(ctx.axis_index or ctx.component or 1, 1, 3)
-	return euler[axis_index]
+local function rotation_component_from_quat(axis_index, rotation_order, quat)
+	local euler = quat_to_euler_xyz(quat, rotation_order or "xyz")
+	return euler[clamp(axis_index or 1, 1, 3)]
 end
 
-local function segment_lengths(axes, flags)
+local function segment_lengths(axes, double_first, double_last)
 	local point_count = #axes[1]
 	if point_count <= 1 then
 		return {}
@@ -273,10 +258,10 @@ local function segment_lengths(axes, flags)
 	end
 
 	if #lengths > 0 then
-		if flags.double_first then
+		if double_first then
 			lengths[1] = lengths[1] * 2.0
 		end
-		if flags.double_last then
+		if double_last then
 			lengths[#lengths] = lengths[#lengths] * 2.0
 		end
 	end
@@ -284,11 +269,10 @@ local function segment_lengths(axes, flags)
 	return lengths
 end
 
-local function weighted_segment(ctx, axes)
-	local flags = get_flags(ctx)
-	local lengths = segment_lengths(axes, flags)
+local function weighted_segment(axes, t, double_first, double_last)
+	local lengths = segment_lengths(axes, double_first, double_last)
 	if #lengths == 0 then
-		return 0, clamp(ctx.t or 0.0, 0.0, 1.0), lengths
+		return 0, clamp(t or 0.0, 0.0, 1.0), lengths
 	end
 
 	local total = 0.0
@@ -296,10 +280,10 @@ local function weighted_segment(ctx, axes)
 		total = total + lengths[i]
 	end
 	if total <= EPS then
-		return resolve_segment(ctx, #axes[1]), lengths
+		return resolve_segment(#axes[1], nil, nil, t), lengths
 	end
 
-	local rest = clamp(ctx.t or 0.0, 0.0, 1.0) * total
+	local rest = clamp(t or 0.0, 0.0, 1.0) * total
 	for i = 1, #lengths do
 		if rest <= lengths[i] then
 			return i - 1, lengths[i] <= EPS and 0.0 or rest / lengths[i], lengths
@@ -323,8 +307,8 @@ local function catmull_rom(start_prev, start_value, end_value, end_next, len_pre
 		+ ((end_value - m1) * s * 3.0 + t * end_value) * t * t
 end
 
-local function linear_value(ctx, values)
-	local segment, t = resolve_segment(ctx, #values)
+local function linear_value(values, segment, local_t, t, double_first, double_last)
+	segment, t = resolve_segment(#values, segment, local_t, t)
 	if #values == 0 then
 		return 0.0
 	end
@@ -332,22 +316,17 @@ local function linear_value(ctx, values)
 		return values[1]
 	end
 
-	local flags = get_flags(ctx)
 	return smooth_edge_value(
 		values[segment + 1],
 		values[segment + 2],
 		t,
-		flags.double_first and segment == 0,
-		flags.double_last and segment == #values - 2
+		double_first and segment == 0,
+		double_last and segment == #values - 2
 	)
 end
 
-local function interpolation_value(ctx, values, lengths)
-	local segment = ctx.segment
-	local t = ctx.local_t
-	if segment == nil or t == nil then
-		segment, t = resolve_segment(ctx, #values)
-	end
+local function interpolation_value(values, lengths, segment, local_t, t, double_first, double_last)
+	segment, t = resolve_segment(#values, segment, local_t, t)
 
 	if #values == 0 then
 		return 0.0
@@ -362,11 +341,10 @@ local function interpolation_value(ctx, values, lengths)
 	local pm1 = values[math.max(i - 1, 1)]
 	local p2 = values[math.min(i + 2, #values)]
 
-	local flags = get_flags(ctx)
-	if i == 1 and not flags.double_first then
+	if i == 1 and not double_first then
 		pm1 = (2.0 * p0 - p1) + HALF * p2
 	end
-	if i == #values - 1 and not flags.double_last then
+	if i == #values - 1 and not double_last then
 		p2 = (2.0 * p1 - p0) + HALF * pm1
 	end
 
@@ -377,63 +355,12 @@ local function interpolation_value(ctx, values, lengths)
 	return catmull_rom(pm1, p0, p1, p2, len_prev, len_cur, len_next, t)
 end
 
-local function make_linked_values(point_count, link_index, link_count)
-	if not link_count or link_count <= 1 then
-		return nil
-	end
-
-	local linked_values = {}
-	for axis = 0, link_count - 1 do
-		local values = {}
-		for i = 0, point_count - 1 do
-			values[i + 1] = obj.getpoint(i, axis - link_index)
-		end
-		linked_values[axis + 1] = values
-	end
-	return linked_values
-end
-
-function M.make_ctx()
-	local index_value = obj.getpoint("index")
-	local segment, local_t = math.modf(index_value)
-	local point_count = obj.getpoint("num")
-	local values = {}
-	for i = 0, point_count - 1 do
-		values[i + 1] = obj.getpoint(i)
-	end
-
-	local link_index, link_count = obj.getpoint("link")
-	link_index = link_index or 0
-	link_count = link_count or 1
-
-	local t = point_count <= 1 and 0.0 or clamp(index_value / (point_count - 1), 0.0, 1.0)
-	local ok, timecontrol_value = pcall(obj.getpoint, "timecontrol", "value")
-	if ok and timecontrol_value then
-		t = timecontrol_value
-	end
-
-	return {
-		values = values,
-		linked_values = make_linked_values(point_count, link_index, link_count),
-		axis_index = link_index + 1,
-		t = t,
-		segment = segment,
-		local_t = local_t,
-		edge_flags = {
-			double_first = obj.getpoint("accelerate"),
-			double_last = obj.getpoint("decelerate"),
-		},
-	}
-end
-
 M.build_rotation_series = build_rotation_series
 M.catmull_rom = catmull_rom
 M.collect_axes = collect_axes
 M.euler_quat_at = euler_quat_at
-M.get_flags = get_flags
 M.interpolation_value = interpolation_value
 M.linear_value = linear_value
-M.normalize_values = normalize_values
 M.quat_slerp = quat_slerp
 M.resolve_segment = resolve_segment
 M.rotation_component_from_quat = rotation_component_from_quat

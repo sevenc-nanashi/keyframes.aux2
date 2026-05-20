@@ -4,16 +4,43 @@
 ---$embed
 local curves = require("common")
 
-local ctx = curves.make_ctx()
-local axes = curves.collect_axes(ctx)
-local segment, t, lengths = curves.weighted_segment(ctx, axes)
+local num = obj.getpoint("num")
+local values = {}
+for i = 0, num - 1 do
+	values[i + 1] = obj.getpoint(i)
+end
 
-return curves.interpolation_value({
-	values = ctx.values,
-	divisor = ctx.divisor,
-	segment = segment,
-	local_t = t,
-	double_first = ctx.double_first,
-	double_last = ctx.double_last,
-	edge_flags = ctx.edge_flags,
-}, curves.normalize_values(ctx.values or {}, ctx.divisor), lengths)
+local link_index, link_count = obj.getpoint("link")
+link_index = link_index or 0
+link_count = link_count or 1
+
+local linked_values = nil
+if link_count > 1 then
+	linked_values = {}
+	for axis = 0, link_count - 1 do
+		local axis_values = {}
+		for i = 0, num - 1 do
+			axis_values[i + 1] = obj.getpoint(i, axis - link_index)
+		end
+		linked_values[axis + 1] = axis_values
+	end
+end
+
+local t = num <= 1 and 0.0 or math.max(0.0, math.min(1.0, obj.getpoint("index") / (num - 1)))
+local ok, timecontrol_value = pcall(obj.getpoint, "timecontrol", "value")
+if ok and timecontrol_value then
+	t = timecontrol_value
+end
+
+local axes = curves.collect_axes(values, linked_values)
+local segment, local_t, lengths = curves.weighted_segment(axes, t, obj.getpoint("accelerate"), obj.getpoint("decelerate"))
+
+return curves.interpolation_value(
+	values,
+	lengths,
+	segment,
+	local_t,
+	nil,
+	obj.getpoint("accelerate"),
+	obj.getpoint("decelerate")
+)
