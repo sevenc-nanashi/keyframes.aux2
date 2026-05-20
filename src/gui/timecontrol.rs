@@ -736,8 +736,16 @@ impl KeyframesGui {
                 &target.track_names[0],
             )
             .context("Failed to get object effect item for time control editor")?;
-        let params = crate::KeyframeTrackParams::parse(&track)
-            .context("Failed to parse keyframe track params for time control editor")?;
+        let params = match crate::KeyframeTrackParams::parse(&track) {
+            Some(params) => params,
+            None => {
+                tracing::error!(
+                    "Failed to parse keyframe track params for time control editor, closing editor"
+                );
+                self.timecontrol_editor = None;
+                return Ok(());
+            }
+        };
         let keyframes = crate::KEYFRAMES
             .get(&params)
             .context("Failed to get keyframes for time control editor")?

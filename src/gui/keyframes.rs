@@ -157,6 +157,10 @@ impl KeyframesGui {
                     [(position.ceil() as usize).min(current_object_color.len() - 1)],
                 position.fract(),
             );
+            if i > 0 {
+                // たまに境目ができてしまうのでちょっとだけ重ねる
+                section_rect.set_left(section_rect.left() - 1.0);
+            }
             painter.rect_filled(section_rect, 0.0, color);
         }
     }
@@ -172,6 +176,7 @@ impl KeyframesGui {
         sections
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn render_keyframe_section_interactions(
         &mut self,
         ui: &mut egui::Ui,
@@ -331,7 +336,8 @@ impl KeyframesGui {
             }
             let easing = match keyframes.keyframes[i] {
                 crate::curve::Keyframe::Easing(ref easing) => easing.easing.as_str(),
-                _ => "-",
+                crate::curve::Keyframe::Midpoint => "〃",
+                _ => continue,
             };
             let left_position = (*frame - object.frames[0]) as f32 / total_frames as f32;
             let right_position =
@@ -339,23 +345,13 @@ impl KeyframesGui {
             let mut rect = Self::section_rect(track_rect, left_position, right_position);
             rect.set_left(rect.left() + ui.spacing().button_padding.x);
 
-            let color = if matches!(keyframes.keyframes[i], crate::curve::Keyframe::Ignored) {
-                ui.visuals()
-                    .widgets
-                    .noninteractive
-                    .fg_stroke
-                    .color
-                    .linear_multiply(0.25)
-            } else {
-                ui.visuals().widgets.noninteractive.fg_stroke.color
-            };
             let mut layout = egui::text::LayoutJob::default();
             layout.append(
                 easing,
                 0.0,
                 egui::TextFormat {
                     font_id: egui::FontId::default(),
-                    color,
+                    color: ui.visuals().widgets.noninteractive.fg_stroke.color,
                     ..Default::default()
                 },
             );
@@ -366,7 +362,7 @@ impl KeyframesGui {
                     pos.y -= galley.size().y / 2.0;
                 }),
                 galley,
-                color,
+                ui.visuals().widgets.noninteractive.fg_stroke.color,
             );
         }
     }
@@ -474,6 +470,7 @@ impl KeyframesGui {
         }
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn show_easing_menu(
         &mut self,
         ui: &mut egui::Ui,
@@ -557,6 +554,7 @@ impl KeyframesGui {
         ui.separator();
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn show_current_easing_options(
         &mut self,
         ui: &mut egui::Ui,

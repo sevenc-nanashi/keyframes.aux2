@@ -74,16 +74,21 @@ inner_obj.getpoint = function(...)
       return remapped_time - left_time
     end
 
+    if remapped_time < left_time then
+      local first_section_time = obj.getpoint("time", indices[1])
+      local second_section_time = obj.getpoint("time", indices[2])
+      return -1 + (remapped_time - first_section_time) / (second_section_time - first_section_time)
+    end
     for i = 1, #indices - 1 do
       local ileft_time = obj.getpoint("time", indices[i])
       local iright_time = obj.getpoint("time", indices[i + 1])
-      if remapped_time < ileft_time then
-        return i - 1
-      elseif remapped_time < iright_time then
+      if remapped_time < iright_time then
         return i - 1 + (remapped_time - ileft_time) / (iright_time - ileft_time)
       end
     end
-    return #indices - 1
+    return #indices - 1 +
+    (remapped_time - obj.getpoint("time", indices[#indices])) /
+    (obj.getpoint("time", indices[#indices]) - obj.getpoint("time", indices[#indices - 1]))
   else
     return obj.getpoint(unpack(args))
     -- local ret = { obj.getpoint(unpack(args)) }

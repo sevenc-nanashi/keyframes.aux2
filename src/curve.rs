@@ -100,7 +100,7 @@ impl TimeControlBezier {
             }
         }
 
-        self.segment_point_at(segment_index, (min_t + max_t) / 2.0)[1].clamp(0.0, 1.0)
+        self.segment_point_at(segment_index, (min_t + max_t) / 2.0)[1]
     }
 
     pub fn point_at(&self, t: f64) -> [f64; 2] {
