@@ -85,6 +85,10 @@ pub fn create_gui(
     }))
 }
 
+static RESOLVED_MIGRATIONS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashSet<crate::KeyframeTrackParams>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
 impl aviutl2_eframe::eframe::App for KeyframesGui {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if crate::EDIT_HANDLE.is_ready() {
@@ -112,6 +116,7 @@ impl aviutl2_eframe::eframe::App for KeyframesGui {
                 );
                 let update_result = crate::EDIT_HANDLE
                     .call_edit_section(|edit| {
+                        let mut resolved_migrations = RESOLVED_MIGRATIONS.lock().unwrap();
                         for (binding, new_params) in change_bindings {
                             tracing::info!(
                                 "Updating keyframe track params for object {:?}, effect {:?} (index {}), track {:?} to {:?}",
@@ -135,6 +140,10 @@ impl aviutl2_eframe::eframe::App for KeyframesGui {
                                 binding.track_name,
                                 &track
                             );
+                            let previous_params = crate::KeyframeTrackParams::parse(&track);
+                            if let Some(previous_params) = previous_params {
+                                resolved_migrations.insert(previous_params);
+                            }
                             new_params.set_params(&mut track)?;
                             edit.set_object_effect_item(
                                 binding.object,
@@ -175,6 +184,9 @@ impl aviutl2_eframe::eframe::App for KeyframesGui {
         ui.request_repaint_after(std::time::Duration::from_millis(100));
         egui::CentralPanel::default().show_inside(ui, |ui| {
             if crate::EDIT_HANDLE.is_ready() {
+                if self.is_undo_mode() {
+                    self.render_undo_mode_warning(ui);
+                }
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     self.render_selected_object_info(ui);
                 });
@@ -186,6 +198,66 @@ impl aviutl2_eframe::eframe::App for KeyframesGui {
 }
 
 impl KeyframesGui {
+    fn is_undo_mode(&self) -> bool {
+        let Some(selected_object_info) = &self.selected_object_info else {
+            return false;
+        };
+
+        selected_object_info.effects.iter().any(|effect| {
+            effect.keyframe_tracks.keys().any(|params| {
+                crate::KEYFRAMES.get(params).is_some_and(|keyframes| {
+                    keyframes.keyframes.len() != selected_object_info.frames.len()
+                })
+            })
+        })
+    }
+
+    fn render_undo_mode_warning(&self, ui: &mut egui::Ui) {
+        let (response, painter) =
+            ui.allocate_painter(ui.available_size(), aviutl2_eframe::egui::Sense::click());
+        let rect = response.rect;
+
+        if response.clicked() {
+            let mut resolved_migrations = RESOLVED_MIGRATIONS.lock().unwrap();
+            resolved_migrations.clear();
+        }
+
+        let color = aviutl2::config::get_color_code("LogWarn")
+            .expect("Null文字はない")
+            .expect("そもそもこれが落ちるなら本体も落ちる")
+            .pipe(|(r, g, b)| egui::Color32::from_rgb(r, g, b));
+
+        let mut layout = egui::text::LayoutJob::default();
+        layout.append(
+            "一時停止中",
+            0.0,
+            egui::TextFormat {
+                font_id: egui::FontId::proportional(18.0),
+                color,
+                ..Default::default()
+            },
+        );
+        layout.append(
+            "Undoを妨げないために同期を中断しています。クリックで再同期します。",
+            0.0,
+            egui::TextFormat {
+                font_id: egui::FontId::default(),
+                color: ui.visuals().widgets.noninteractive.fg_stroke.color,
+                ..Default::default()
+            },
+        );
+        layout.wrap = egui::text::TextWrapping::wrap_at_width(rect.width());
+        let galley = painter.layout_job(layout);
+        painter.galley(
+            rect.center().tap_mut(|pos| {
+                pos.x -= galley.size().x / 2.0;
+                pos.y -= galley.size().y / 2.0;
+            }),
+            galley,
+            color,
+        );
+    }
+
     fn update_keyframe_bindings(
         read: &aviutl2::generic::ReadSection,
     ) -> aviutl2::common::AnyResult<
@@ -211,6 +283,7 @@ impl KeyframesGui {
             crate::KeyframeTrackParams,
             (aviutl2::generic::ObjectHandle, String, usize),
         >::new();
+        let resolved_migrations = RESOLVED_MIGRATIONS.lock().unwrap();
         for (params, bindings) in &bindings {
             for binding in bindings {
                 let effect_key = (
@@ -218,6 +291,9 @@ impl KeyframesGui {
                     binding.effect_name.clone(),
                     binding.effect_index,
                 );
+                if resolved_migrations.contains(params) {
+                    continue;
+                }
                 if let Some(existing_params) = param_to_effect.get(params)
                     && existing_params != &effect_key
                 {
@@ -337,8 +413,21 @@ impl KeyframesGui {
         // ui.label(format!("Selected Object: {}", selected_object_info.name));
         if ui
             .add(
-                egui::Label::new(format!("Selected Object: {}", selected_object_info.name))
-                    .sense(egui::Sense::click()),
+                egui::Label::new(
+                    egui::RichText::new(format!("Selected Object: {}", selected_object_info.name))
+                        .color(
+                            if crate::module::DEBUG_MODE.load(std::sync::atomic::Ordering::Relaxed)
+                            {
+                                aviutl2::config::get_color_code("LogWarn")
+                                    .expect("Null文字はない")
+                                    .expect("そもそもこれが落ちるなら本体も落ちる")
+                                    .pipe(|(r, g, b)| egui::Color32::from_rgb(r, g, b))
+                            } else {
+                                ui.visuals().widgets.noninteractive.fg_stroke.color
+                            },
+                        ),
+                )
+                .sense(egui::Sense::click()),
             )
             .clicked()
         {
@@ -362,13 +451,17 @@ impl KeyframesGui {
         object: &SelectedObjectInfo,
         effect: &EffectInfo,
     ) {
-        ui.collapsing(format!("Effect: {}", effect.name), |ui| {
-            for (params, track) in &effect.keyframe_tracks {
-                ui.push_id(&track.names, |ui| {
-                    self.render_keyframe_track_info(ui, info, object, effect, params, track);
-                });
-            }
-        });
+        egui::containers::CollapsingHeader::new(format!("Effect: {}", effect.name))
+            .id_salt((effect.index, &effect.name))
+            .enabled(!effect.keyframe_tracks.is_empty())
+            .open(effect.keyframe_tracks.is_empty().then_some(false))
+            .show(ui, |ui| {
+                for (params, track) in &effect.keyframe_tracks {
+                    ui.push_id(&track.names, |ui| {
+                        self.render_keyframe_track_info(ui, info, object, effect, params, track);
+                    });
+                }
+            });
     }
 
     fn render_keyframe_track_info(
@@ -380,7 +473,15 @@ impl KeyframesGui {
         params: &crate::KeyframeTrackParams,
         track: &KeyframeTrackInfo,
     ) {
-        ui.label(track.names.join(", "));
+        ui.horizontal_wrapped(|ui| {
+            for name in &track.names {
+                ui.menu_button(name, |ui| {
+                    if ui.button("分離").clicked() {
+                        self.detach_keyframe_track(object, effect, params, track, name);
+                    }
+                });
+            }
+        });
         let (response, painter) = ui.allocate_painter(
             ui.available_size().tap_mut(|s| {
                 s.y = 24.0;
@@ -418,22 +519,49 @@ impl KeyframesGui {
                     (object.frames[i + 1] - object.frames[0]) as f32 / total_frames as f32;
                 sections.push((i, left_position, right_position));
             }
-            // ホバーしているセクションの強調表示
-            for section in sections {
-                let mut rect = response.rect;
-                let left_position = response.rect.left() + section.1 * response.rect.width();
-                let right_position = response.rect.left() + section.2 * response.rect.width();
-                rect.set_left(left_position);
-                rect.set_right(right_position);
-                let response = ui.interact(
-                    rect,
-                    ui.id().with(section.0),
-                    aviutl2_eframe::egui::Sense::click(),
-                );
-                if response.hovered() {
-                    painter.rect_filled(rect, 0.0, selected_object_color);
-                }
-                egui::containers::Popup::menu(&response).show(|ui| {
+            if sections.len() != keyframes.keyframes.len() - 1 {
+                return;
+            } else {
+                // ホバーしているセクションの強調表示
+                let crate::curve::Keyframe::Easing(ref kf_info) = keyframes.keyframes[0] else {
+                    unreachable!();
+                };
+                let mut kf_info = kf_info;
+                for section in sections {
+                    let mut rect = response.rect;
+                    if let crate::curve::Keyframe::Easing(ref new_kf_info) =
+                        keyframes.keyframes[section.0]
+                    {
+                        kf_info = new_kf_info;
+                    }
+                    let left_position = response.rect.left() + section.1 * response.rect.width();
+                    let right_position = response.rect.left() + section.2 * response.rect.width();
+                    rect.set_left(left_position);
+                    rect.set_right(right_position);
+                    let response = ui
+                        .interact(
+                            rect,
+                            ui.id().with(section.0),
+                            aviutl2_eframe::egui::Sense::click(),
+                        )
+                        .on_hover_text(if kf_info.params.is_empty() {
+                            kf_info.easing.clone()
+                        } else {
+                            format!(
+                                "{}：{}",
+                                kf_info.easing,
+                                kf_info
+                                    .params
+                                    .iter()
+                                    .map(|p| p.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        });
+                    if response.hovered() {
+                        painter.rect_filled(rect, 0.0, selected_object_color);
+                    }
+                    egui::containers::Popup::menu(&response).show(|ui| {
                     self.show_easing_menu(ui, &keyframes, params, section.0, "", |new_keyframes| {
                         tracing::info!(
                             "Updating keyframe {:?} of track {:?} in effect {:?} to {:?}",
@@ -488,92 +616,95 @@ impl KeyframesGui {
                             }
                     });
                 });
-            }
-            // if let Some(hovered_section) = hovered_section {
-            //     let mut rect = response.rect;
-            //     let left_position =
-            //         response.rect.left() + hovered_section.1 * response.rect.width();
-            //     let right_position =
-            //         response.rect.left() + hovered_section.2 * response.rect.width();
-            //     rect.set_left(left_position);
-            //     rect.set_right(right_position);
-            //     painter.rect_filled(rect, 0.0, selected_object_color);
-            // }
-
-            // 現在のイージング
-            for (i, frame) in object.frames.iter().enumerate() {
-                if i == object.frames.len() - 1 {
-                    continue;
                 }
-                let easing = match keyframes.keyframes[i] {
-                    crate::curve::Keyframe::Easing(ref easing) => Some(easing.easing.as_str()),
-                    _ => Some("-"),
-                };
-                let left_position = (*frame - object.frames[0]) as f32 / total_frames as f32;
-                let right_position =
-                    (object.frames[i + 1] - object.frames[0]) as f32 / total_frames as f32;
-                let mut rect = response.rect;
-                rect.set_left(rect.left() + left_position * response.rect.width());
-                rect.set_right(
-                    rect.left() + (right_position - left_position) * response.rect.width(),
-                );
-                rect.set_left(rect.left() + ui.spacing().button_padding.x);
+                // if let Some(hovered_section) = hovered_section {
+                //     let mut rect = response.rect;
+                //     let left_position =
+                //         response.rect.left() + hovered_section.1 * response.rect.width();
+                //     let right_position =
+                //         response.rect.left() + hovered_section.2 * response.rect.width();
+                //     rect.set_left(left_position);
+                //     rect.set_right(right_position);
+                //     painter.rect_filled(rect, 0.0, selected_object_color);
+                // }
 
-                let color = if matches!(keyframes.keyframes[i], crate::curve::Keyframe::Ignored) {
-                    ui.visuals()
-                        .widgets
-                        .noninteractive
-                        .fg_stroke
-                        .color
-                        .linear_multiply(0.25)
-                } else {
-                    ui.visuals().widgets.noninteractive.fg_stroke.color
-                };
-                let mut layout = egui::text::LayoutJob::default();
-                layout.append(
-                    if let Some(easing) = easing {
-                        easing
+                // 現在のイージング
+                for (i, frame) in object.frames.iter().enumerate() {
+                    if i == object.frames.len() - 1 {
+                        continue;
+                    }
+                    let easing = match keyframes.keyframes[i] {
+                        crate::curve::Keyframe::Easing(ref easing) => Some(easing.easing.as_str()),
+                        _ => Some("-"),
+                    };
+                    let left_position = (*frame - object.frames[0]) as f32 / total_frames as f32;
+                    let right_position =
+                        (object.frames[i + 1] - object.frames[0]) as f32 / total_frames as f32;
+                    let mut rect = response.rect;
+                    rect.set_left(rect.left() + left_position * response.rect.width());
+                    rect.set_right(
+                        rect.left() + (right_position - left_position) * response.rect.width(),
+                    );
+                    rect.set_left(rect.left() + ui.spacing().button_padding.x);
+
+                    let color = if matches!(keyframes.keyframes[i], crate::curve::Keyframe::Ignored)
+                    {
+                        ui.visuals()
+                            .widgets
+                            .noninteractive
+                            .fg_stroke
+                            .color
+                            .linear_multiply(0.25)
                     } else {
-                        "-"
-                    },
-                    0.0,
-                    egui::TextFormat {
-                        font_id: egui::FontId::default(),
+                        ui.visuals().widgets.noninteractive.fg_stroke.color
+                    };
+                    let mut layout = egui::text::LayoutJob::default();
+                    layout.append(
+                        if let Some(easing) = easing {
+                            easing
+                        } else {
+                            "-"
+                        },
+                        0.0,
+                        egui::TextFormat {
+                            font_id: egui::FontId::default(),
+                            color,
+                            ..Default::default()
+                        },
+                    );
+                    layout.wrap = egui::text::TextWrapping::truncate_at_width(rect.width());
+                    let galley = painter.layout_job(layout);
+                    painter.galley(
+                        rect.left_center().tap_mut(|pos| {
+                            pos.y -= galley.size().y / 2.0;
+                        }),
+                        galley,
                         color,
-                        ..Default::default()
-                    },
-                );
-                layout.wrap = egui::text::TextWrapping::truncate_at_width(rect.width());
-                let galley = painter.layout_job(layout);
-                painter.galley(
-                    rect.left_center().tap_mut(|pos| {
-                        pos.y -= galley.size().y / 2.0;
-                    }),
-                    galley,
-                    color,
-                );
-            }
-
-            // 中間点の線
-            for (i, frame) in object.frames.iter().enumerate() {
-                if i == 0 || i == object.frames.len() - 1 {
-                    continue;
+                    );
                 }
-                let position =
-                    (*frame - object.frames.first().unwrap()) as f32 / total_frames as f32;
-                let mut rect = response.rect;
-                rect.set_left(rect.left() + position * response.rect.width() - 1.0);
-                rect.set_right(rect.left() + 1.0);
-                let color = if matches!(keyframes.keyframes[i], crate::curve::Keyframe::Ignored) {
-                    ui.visuals()
-                        .widgets
-                        .noninteractive
-                        .bg_fill
-                        .linear_multiply(0.25)
-                } else {
-                    ui.visuals().widgets.noninteractive.bg_fill
-                };
-                painter.rect_filled(rect, 0.0, color);
+
+                // 中間点の線
+                for (i, frame) in object.frames.iter().enumerate() {
+                    if i == 0 || i == object.frames.len() - 1 {
+                        continue;
+                    }
+                    let position =
+                        (*frame - object.frames.first().unwrap()) as f32 / total_frames as f32;
+                    let mut rect = response.rect;
+                    rect.set_left(rect.left() + position * response.rect.width() - 1.0);
+                    rect.set_right(rect.left() + 1.0);
+                    let color = if matches!(keyframes.keyframes[i], crate::curve::Keyframe::Ignored)
+                    {
+                        ui.visuals()
+                            .widgets
+                            .noninteractive
+                            .bg_fill
+                            .linear_multiply(0.25)
+                    } else {
+                        ui.visuals().widgets.noninteractive.bg_fill
+                    };
+                    painter.rect_filled(rect, 0.0, color);
+                }
             }
         }
         // カーソル
@@ -590,6 +721,55 @@ impl KeyframesGui {
                 .expect("そもそもこれが落ちるなら本体も落ちる")
                 .pipe(|(r, g, b)| egui::Color32::from_rgb(r, g, b));
             painter.rect_filled(rect, 0.0, selected_line);
+        }
+    }
+
+    fn detach_keyframe_track(
+        &self,
+        object: &SelectedObjectInfo,
+        effect: &EffectInfo,
+        params: &crate::KeyframeTrackParams,
+        track: &KeyframeTrackInfo,
+        name: &str,
+    ) {
+        let res = crate::EDIT_HANDLE
+            .call_edit_section(|edit| {
+                let new_params = crate::KeyframeTrackParams::new();
+                if let Some(keyframes) = crate::KEYFRAMES.get(params) {
+                    crate::KEYFRAMES.insert(new_params, keyframes.clone());
+                }
+                let mut before =
+                    edit.get_object_effect_item(object.handle, &effect.name, effect.index, name)?;
+                new_params.set_params(&mut before)?;
+                edit.set_object_effect_item(
+                    object.handle,
+                    &effect.name,
+                    effect.index,
+                    name,
+                    &before,
+                )?;
+                anyhow::Ok(())
+            })
+            .map_err(anyhow::Error::from)
+            .flatten();
+        match res {
+            Ok(()) => {
+                tracing::info!(
+                    "Detached keyframe track {:?} of effect {:?} in object {:?}",
+                    track.names,
+                    effect.name,
+                    object.name
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to detach keyframe track {:?} of effect {:?} in object {:?}: {:?}",
+                    track.names,
+                    effect.name,
+                    object.name,
+                    e
+                );
+            }
         }
     }
 
