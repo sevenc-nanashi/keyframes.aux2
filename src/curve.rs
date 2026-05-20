@@ -53,12 +53,33 @@ impl Default for EasingKeyframeInfo {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TimeControlBezier {
-    pub control_points: [[f64; 2]; 2],
+    pub points: Vec<TimeControlBezierPoint>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TimeControlBezierPoint {
+    pub position: [f64; 2],
+    pub in_handle: Option<[f64; 2]>,
+    pub out_handle: Option<[f64; 2]>,
+    pub handles_separated: bool,
 }
 impl Default for TimeControlBezier {
     fn default() -> Self {
         Self {
-            control_points: [[0.0, 0.0], [1.0, 1.0]],
+            points: vec![
+                TimeControlBezierPoint {
+                    position: [0.0, 0.0],
+                    in_handle: None,
+                    out_handle: Some([1.0 / 3.0, 1.0 / 3.0]),
+                    handles_separated: false,
+                },
+                TimeControlBezierPoint {
+                    position: [1.0, 1.0],
+                    in_handle: Some([2.0 / 3.0, 2.0 / 3.0]),
+                    out_handle: None,
+                    handles_separated: false,
+                },
+            ],
         }
     }
 }
@@ -66,28 +87,41 @@ impl Default for TimeControlBezier {
 impl TimeControlBezier {
     pub fn y_at_x(&self, x: f64) -> f64 {
         let x = x.clamp(0.0, 1.0);
+        let segment_index = self.segment_index_at_x(x);
         let mut min_t = 0.0;
         let mut max_t = 1.0;
 
         for _ in 0..32 {
             let t = (min_t + max_t) / 2.0;
-            if self.point_at(t)[0] < x {
+            if self.segment_point_at(segment_index, t)[0] < x {
                 min_t = t;
             } else {
                 max_t = t;
             }
         }
 
-        self.point_at((min_t + max_t) / 2.0)[1].clamp(0.0, 1.0)
+        self.segment_point_at(segment_index, (min_t + max_t) / 2.0)[1].clamp(0.0, 1.0)
     }
 
     pub fn point_at(&self, t: f64) -> [f64; 2] {
+        self.y_point_at_x(t)
+    }
+
+    pub fn y_point_at_x(&self, x: f64) -> [f64; 2] {
+        let x = x.clamp(0.0, 1.0);
+        [x, self.y_at_x(x)]
+    }
+
+    pub fn segment_point_at(&self, segment_index: usize, t: f64) -> [f64; 2] {
         let t = t.clamp(0.0, 1.0);
         let mt = 1.0 - t;
-        let p0 = [0.0, 0.0];
-        let p1 = self.control_points[0];
-        let p2 = self.control_points[1];
-        let p3 = [1.0, 1.0];
+        let segment_index = segment_index.min(self.points.len().saturating_sub(2));
+        let start = &self.points[segment_index];
+        let end = &self.points[segment_index + 1];
+        let p0 = start.position;
+        let p1 = start.out_handle.unwrap_or(start.position);
+        let p2 = end.in_handle.unwrap_or(end.position);
+        let p3 = end.position;
 
         [
             mt.powi(3) * p0[0]
@@ -99,6 +133,48 @@ impl TimeControlBezier {
                 + 3.0 * mt * t.powi(2) * p2[1]
                 + t.powi(3) * p3[1],
         ]
+    }
+
+    pub fn insert_midpoint(&mut self, after_index: usize) -> usize {
+        let after_index = after_index.min(self.points.len().saturating_sub(2));
+        let x =
+            (self.points[after_index].position[0] + self.points[after_index + 1].position[0]) / 2.0;
+        let y = self.y_at_x(x);
+        let prev = self.points[after_index].position;
+        let next = self.points[after_index + 1].position;
+        let handle_delta = [(next[0] - prev[0]) / 6.0, (next[1] - prev[1]) / 6.0];
+        let new_point = TimeControlBezierPoint {
+            position: [x, y],
+            in_handle: Some([
+                (x - handle_delta[0]).clamp(0.0, 1.0),
+                (y - handle_delta[1]).clamp(0.0, 1.0),
+            ]),
+            out_handle: Some([
+                (x + handle_delta[0]).clamp(0.0, 1.0),
+                (y + handle_delta[1]).clamp(0.0, 1.0),
+            ]),
+            handles_separated: false,
+        };
+        let new_index = after_index + 1;
+        self.points.insert(new_index, new_point);
+        new_index
+    }
+
+    pub fn remove_midpoint(&mut self, index: usize) {
+        if index == 0 || index + 1 >= self.points.len() {
+            return;
+        }
+        self.points.remove(index);
+    }
+
+    fn segment_index_at_x(&self, x: f64) -> usize {
+        if self.points.len() <= 1 {
+            return 0;
+        }
+        self.points
+            .windows(2)
+            .position(|points| x <= points[1].position[0])
+            .unwrap_or(self.points.len() - 2)
     }
 }
 
