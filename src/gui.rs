@@ -18,6 +18,7 @@ struct TimeControlEditorTarget {
     track_names: Vec<String>,
     timecontrol: crate::curve::TimeControlBezier,
     selected_point: usize,
+    context_menu_position: Option<[f64; 2]>,
     dirty: bool,
 }
 
@@ -817,12 +818,12 @@ impl KeyframesGui {
 
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            if ui.small_button("戻る").clicked() {
+            if ui.button("戻る").clicked() {
                 self.timecontrol_editor = None;
             }
             ui.label(egui::RichText::new("時間制御").strong());
         });
-        ui.add_space(4.0);
+        ui.separator();
 
         if self.timecontrol_editor.is_none() {
             return;
@@ -832,6 +833,7 @@ impl KeyframesGui {
             ui,
             &mut target.timecontrol,
             &mut target.selected_point,
+            &mut target.context_menu_position,
         );
         target.dirty |= changed;
 
@@ -864,9 +866,11 @@ impl KeyframesGui {
         ui: &mut egui::Ui,
         timecontrol: &mut crate::curve::TimeControlBezier,
         selected_point: &mut usize,
+        context_menu_position: &mut Option<[f64; 2]>,
     ) -> (bool, bool) {
         let mut changed = false;
         let mut commit_requested = false;
+        let mut structure_changed = false;
         *selected_point = (*selected_point).min(timecontrol.points.len().saturating_sub(1));
 
         let available_size = ui.available_size();
@@ -888,13 +892,15 @@ impl KeyframesGui {
                 min_y + ((rect.bottom() - point.y) / rect.height()) as f64 * (max_y - min_y),
             ]
         };
-        let add_point_position = response
-            .interact_pointer_pos()
-            .map(from_screen)
-            .unwrap_or([0.5, 0.5]);
+        if response.secondary_clicked() {
+            *context_menu_position = response.interact_pointer_pos().map(from_screen);
+        }
         response.context_menu(|ui| {
             if ui.button("中継点追加").clicked() {
-                *selected_point = Self::insert_timecontrol_point(timecontrol, add_point_position);
+                *selected_point = Self::insert_timecontrol_point(
+                    timecontrol,
+                    context_menu_position.unwrap_or([0.5, 0.5]),
+                );
                 changed = true;
                 commit_requested = true;
                 ui.close();
@@ -1000,6 +1006,8 @@ impl KeyframesGui {
                 }
                 if handle_response.secondary_clicked() {
                     *selected_point = point_index;
+                    *context_menu_position =
+                        handle_response.interact_pointer_pos().map(from_screen);
                 }
                 if handle_response.dragged()
                     && let Some(pointer_pos) = handle_response.interact_pointer_pos()
@@ -1049,10 +1057,13 @@ impl KeyframesGui {
                 painter.circle_filled(handle_pos, 4.0, color.linear_multiply(0.85));
                 handle_response.context_menu(|ui| {
                     if ui.button("中継点追加").clicked() {
-                        *selected_point =
-                            Self::insert_timecontrol_point(timecontrol, from_screen(handle_pos));
+                        *selected_point = Self::insert_timecontrol_point(
+                            timecontrol,
+                            context_menu_position.unwrap_or_else(|| from_screen(handle_pos)),
+                        );
                         changed = true;
                         commit_requested = true;
+                        structure_changed = true;
                         ui.close();
                     }
                     ui.separator();
@@ -1061,6 +1072,9 @@ impl KeyframesGui {
                         commit_requested = true;
                     }
                 });
+                if structure_changed {
+                    return (changed, commit_requested);
+                }
             }
         }
 
@@ -1077,6 +1091,7 @@ impl KeyframesGui {
             }
             if handle_response.secondary_clicked() {
                 *selected_point = point_index;
+                *context_menu_position = handle_response.interact_pointer_pos().map(from_screen);
             }
             if handle_response.dragged()
                 && let Some(pointer_pos) = handle_response.interact_pointer_pos()
@@ -1099,12 +1114,21 @@ impl KeyframesGui {
                 2.0,
                 color,
             );
+            let before_len = timecontrol.points.len();
             handle_response.context_menu(|ui| {
-                if Self::show_timecontrol_anchor_menu(ui, timecontrol, selected_point) {
+                if Self::show_timecontrol_anchor_menu(
+                    ui,
+                    timecontrol,
+                    selected_point,
+                    context_menu_position.unwrap_or_else(|| from_screen(point)),
+                ) {
                     changed = true;
                     commit_requested = true;
                 }
             });
+            if timecontrol.points.len() != before_len {
+                return (changed, commit_requested);
+            }
         }
 
         (changed, commit_requested)
@@ -1114,13 +1138,13 @@ impl KeyframesGui {
         ui: &mut egui::Ui,
         timecontrol: &mut crate::curve::TimeControlBezier,
         selected_point: &mut usize,
+        add_point_position: [f64; 2],
     ) -> bool {
         let mut changed = false;
         *selected_point = (*selected_point).min(timecontrol.points.len().saturating_sub(1));
 
         if ui.button("中継点追加").clicked() {
-            let after_index = (*selected_point).min(timecontrol.points.len().saturating_sub(2));
-            *selected_point = timecontrol.insert_midpoint(after_index);
+            *selected_point = Self::insert_timecontrol_point(timecontrol, add_point_position);
             changed = true;
             ui.close();
         }
@@ -1130,8 +1154,7 @@ impl KeyframesGui {
             .add_enabled(can_remove, egui::Button::new("中継点削除"))
             .clicked()
         {
-            timecontrol.remove_midpoint(*selected_point);
-            *selected_point = (*selected_point).min(timecontrol.points.len().saturating_sub(1));
+            Self::remove_timecontrol_point(timecontrol, selected_point);
             changed = true;
             ui.close();
         }
@@ -1160,11 +1183,23 @@ impl KeyframesGui {
                 timecontrol.points[new_index + 1].position[0]
                     - Self::TIMECONTROL_MIN_ANCHOR_DISTANCE,
             ),
-            timecontrol.y_at_x(x),
+            position[1],
         ];
         Self::reset_timecontrol_handles(timecontrol, new_index);
         Self::constrain_all_timecontrol_handles(timecontrol);
         new_index
+    }
+
+    fn remove_timecontrol_point(
+        timecontrol: &mut crate::curve::TimeControlBezier,
+        selected_point: &mut usize,
+    ) {
+        let remove_index = *selected_point;
+        timecontrol.remove_midpoint(remove_index);
+        *selected_point = remove_index
+            .saturating_sub(1)
+            .min(timecontrol.points.len().saturating_sub(1));
+        Self::constrain_all_timecontrol_handles(timecontrol);
     }
 
     fn show_timecontrol_handle_menu(
@@ -1716,6 +1751,7 @@ impl KeyframesGui {
                 track_names: track.names.clone(),
                 timecontrol: current_keyframe.timecontrol.clone(),
                 selected_point: 0,
+                context_menu_position: None,
                 dirty: false,
             });
             ui.close();
