@@ -1,9 +1,32 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/karoterra/aviutl2-aulua/refs/heads/main/schema/aulua.schema.json
 
 build:
+  embed_search_dirs:
+    - src
   out_dir: build
 
 scripts:
   - name: keyframes.aux2.tra2
     sources:
       - path: src/track.lua
+
+  - name: "@embedded.tra2"
+    sources:
+      - label: 直線移動
+        path: src/std/直線移動.lua
+      - label: 直線移動(時間制御)
+        path: src/std/直線移動(時間制御).lua
+      - label: 直線移動(回転)
+        path: src/std/直線移動(回転).lua
+      - label: 補間移動
+        path: src/std/補間移動.lua
+      - label: 補間移動(時間制御)
+        path: src/std/補間移動(時間制御).lua
+      - label: 補間移動(回転)
+        path: src/std/補間移動(回転).lua
+      - label: 移動量指定
+        path: src/std/移動量指定.lua
+      - label: ランダム移動
+        path: src/std/ランダム移動.lua
+      - label: 瞬間移動
+        path: src/std/瞬間移動.lua

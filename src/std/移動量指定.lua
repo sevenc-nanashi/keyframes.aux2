@@ -1,6 +1,7 @@
 --speed:0,0
+--twopoint
 
 ---$embed
 local curves = require("std_curves")
 
-return curves.linear_move()
+return curves.speed_move()

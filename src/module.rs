@@ -54,7 +54,6 @@ impl KeyframesMod2 {
                 crate::curve::Keyframe::Ignored => (),
             }
         }
-        aviutl2::ldbg!(&indices);
         let easing = crate::EASINGS
             .get()
             .context("easings not initialized")?

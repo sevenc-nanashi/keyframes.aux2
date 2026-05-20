@@ -70,15 +70,19 @@ inner_G.obj = inner_obj
 setmetatable(inner_obj, { __index = obj, __newindex = obj })
 setmetatable(inner_G, { __index = _G, __newindex = _G })
 
-local f, err = loadstring(script, script_name)
-if not f then
-  error("Failed to load keyframe script: " .. err)
+SCRIPT_CACHE = SCRIPT_CACHE or {}
+local f
+if SCRIPT_CACHE[script_name] then
+  f = SCRIPT_CACHE[script_name]
+else
+  local err
+  f, err = loadstring(script, script_name)
+  if not f then
+    error("Failed to load keyframe script: " .. err)
+  end
+  SCRIPT_CACHE[script_name] = f
 end
 
 setfenv(f, inner_G)
-local success, result = pcall(f)
-if not success then
-  error("Error executing keyframe script: " .. result)
-end
-
-return result
+local res = f()
+return res

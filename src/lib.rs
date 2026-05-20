@@ -242,16 +242,10 @@ fn load_effects() -> anyhow::Result<()> {
     tracing::info!("Loaded {} effects", EFFECTS.len());
     tracing::info!("Loading easings...");
     let mut easings = vec![];
-    static STANDARD_EASINGS: include_dir::Dir<'_> =
-        include_dir::include_dir!("$CARGO_MANIFEST_DIR/src/std");
-    for file in STANDARD_EASINGS.files() {
-        if let Some(content) = file.contents_utf8() {
-            let easing_name = file.path().file_stem().unwrap().to_string_lossy();
-            let easing = crate::curve::Easing::from_script(&easing_name, content);
-            easings.push(easing);
-            tracing::info!("Loaded standard easing: {}", easing_name);
-        }
-    }
+    let standard_easings =
+        crate::curve::Easing::from_multi_script(include_str!("../build/stdlib.tra2"));
+    tracing::info!("Loaded standard easings: {}", standard_easings.len());
+    easings.extend(standard_easings);
 
     let bundled_easings = std::env::current_exe()
         .unwrap()
@@ -331,20 +325,25 @@ fn load_effects() -> anyhow::Result<()> {
         };
 
         let file_stem = file.file_stem().unwrap_or_default().to_string_lossy();
-        if file
+        let file_name_starts_with_at = file
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
-            .starts_with('@')
-        {
+            .starts_with('@');
+        let content_starts_with_at = encoded.trim_start().starts_with('@');
+        if file_name_starts_with_at || content_starts_with_at {
             let scripts = crate::curve::Easing::from_multi_script(&encoded);
             for mut script in scripts {
-                tracing::info!(
-                    "Loaded easing from script file: {}{}",
-                    script.name,
-                    file_stem
-                );
-                script.name = format!("{}{}", script.name, file_stem);
+                if file_name_starts_with_at {
+                    tracing::info!(
+                        "Loaded easing from script file: {}{}",
+                        script.name,
+                        file_stem
+                    );
+                    script.name = format!("{}{}", script.name, file_stem);
+                } else {
+                    tracing::info!("Loaded easing from script file: {}", script.name);
+                }
                 script.label = script.label.or_else(|| label.clone());
                 easings.push(script);
             }
@@ -377,8 +376,7 @@ fn load_effects() -> anyhow::Result<()> {
     let mut index_map = indexmap::IndexMap::new();
     for easing in easings {
         if index_map.contains_key(&easing.name) {
-            tracing::warn!("Duplicate easing name found: {}. Skipping.", easing.name);
-            continue;
+            tracing::warn!("Duplicate easing name found: {}. Overwriting.", easing.name);
         }
         index_map.insert(easing.name.clone(), easing);
     }

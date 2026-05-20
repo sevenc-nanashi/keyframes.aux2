@@ -665,6 +665,15 @@ impl KeyframesGui {
                         deceleration: easing.default_deceleration,
                         params: easing.params.values().cloned().collect(),
                     });
+                    if easing.ignore_midpoints {
+                        for i in index + 1..keyframes.keyframes.len() {
+                            if matches!(new_keyframes.keyframes[i], crate::curve::Keyframe::Midpoint) {
+                                new_keyframes.keyframes[i] = crate::curve::Keyframe::Ignored;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
                     update_keyframe(new_keyframes);
                 }
             }

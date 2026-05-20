@@ -3,4 +3,4 @@
 ---$embed
 local curves = require("std_curves")
 
-return curves.linear_move()
+return curves.random_move()
