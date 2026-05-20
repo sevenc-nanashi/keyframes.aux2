@@ -60,6 +60,30 @@ inner_obj.getpoint = function(...)
     return unpack(params)
   elseif target == "num" then
     return #indices
+  elseif target == "timecontrol" then
+    local target_time = option2 or obj.getpoint("time")
+    local left_time = obj.getpoint("time", indices[1])
+    local right_time = obj.getpoint("time", indices[#indices])
+    local ratio = (target_time - left_time) / (right_time - left_time)
+    local value = mod.get_timecontrol_value(bank_id, keyframe_id, index, ratio)
+    if option == "value" then
+      return value
+    end
+    local remapped_time = left_time + value * (right_time - left_time)
+    if option == "time" then
+      return remapped_time - left_time
+    end
+
+    for i = 1, #indices - 1 do
+      local ileft_time = obj.getpoint("time", indices[i])
+      local iright_time = obj.getpoint("time", indices[i + 1])
+      if remapped_time < ileft_time then
+        return i - 1
+      elseif remapped_time < iright_time then
+        return i - 1 + (remapped_time - ileft_time) / (iright_time - ileft_time)
+      end
+    end
+    return #indices - 1
   else
     return obj.getpoint(unpack(args))
     -- local ret = { obj.getpoint(unpack(args)) }

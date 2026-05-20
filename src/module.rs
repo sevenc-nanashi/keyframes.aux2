@@ -71,6 +71,33 @@ impl KeyframesMod2 {
         ))
     }
 
+    fn get_timecontrol_value(
+        &self,
+        bank_id: i32,
+        track_id: i32,
+        index: usize,
+        x: f64,
+    ) -> aviutl2::common::AnyResult<f64> {
+        let param = crate::KeyframeTrackParams {
+            bank_id: bank_id as _,
+            keyframes_id: track_id as _,
+        };
+        let keyframes = crate::KEYFRAMES
+            .get(&param)
+            .context("keyframes not found")?;
+        let keyframe = keyframes
+            .keyframes
+            .iter()
+            .take(index + 1)
+            .rfind(|k| matches!(k, crate::curve::Keyframe::Easing(_)))
+            .expect("first keyframe must be easing");
+        let crate::curve::Keyframe::Easing(keyframe) = keyframe else {
+            unreachable!()
+        };
+
+        Ok(keyframe.timecontrol.y_at_x(x))
+    }
+
     fn debug_mode(&self) -> bool {
         DEBUG_MODE.load(std::sync::atomic::Ordering::Relaxed)
     }

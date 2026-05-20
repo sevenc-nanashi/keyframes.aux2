@@ -37,6 +37,7 @@ pub struct EasingKeyframeInfo {
     pub acceleration: bool,
     pub deceleration: bool,
     pub params: Vec<f64>,
+    pub timecontrol: TimeControlBezier,
 }
 impl Default for EasingKeyframeInfo {
     fn default() -> Self {
@@ -45,7 +46,59 @@ impl Default for EasingKeyframeInfo {
             acceleration: false,
             deceleration: false,
             params: Vec::new(),
+            timecontrol: TimeControlBezier::default(),
         }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TimeControlBezier {
+    pub control_points: [[f64; 2]; 2],
+}
+impl Default for TimeControlBezier {
+    fn default() -> Self {
+        Self {
+            control_points: [[0.0, 0.0], [1.0, 1.0]],
+        }
+    }
+}
+
+impl TimeControlBezier {
+    pub fn y_at_x(&self, x: f64) -> f64 {
+        let x = x.clamp(0.0, 1.0);
+        let mut min_t = 0.0;
+        let mut max_t = 1.0;
+
+        for _ in 0..32 {
+            let t = (min_t + max_t) / 2.0;
+            if self.point_at(t)[0] < x {
+                min_t = t;
+            } else {
+                max_t = t;
+            }
+        }
+
+        self.point_at((min_t + max_t) / 2.0)[1].clamp(0.0, 1.0)
+    }
+
+    pub fn point_at(&self, t: f64) -> [f64; 2] {
+        let t = t.clamp(0.0, 1.0);
+        let mt = 1.0 - t;
+        let p0 = [0.0, 0.0];
+        let p1 = self.control_points[0];
+        let p2 = self.control_points[1];
+        let p3 = [1.0, 1.0];
+
+        [
+            mt.powi(3) * p0[0]
+                + 3.0 * mt.powi(2) * t * p1[0]
+                + 3.0 * mt * t.powi(2) * p2[0]
+                + t.powi(3) * p3[0],
+            mt.powi(3) * p0[1]
+                + 3.0 * mt.powi(2) * t * p1[1]
+                + 3.0 * mt * t.powi(2) * p2[1]
+                + t.powi(3) * p3[1],
+        ]
     }
 }
 
@@ -132,5 +185,19 @@ impl Easing {
         }
 
         easings
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_timecontrol_bezier_maps_x_to_same_y() {
+        let timecontrol = TimeControlBezier::default();
+
+        for x in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            assert!((timecontrol.y_at_x(x) - x).abs() < 0.000001);
+        }
     }
 }

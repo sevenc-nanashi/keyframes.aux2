@@ -4,7 +4,20 @@ use tap::prelude::*;
 
 pub struct KeyframesGui {
     selected_object_info: Option<SelectedObjectInfo>,
+    timecontrol_editor: Option<TimeControlEditorTarget>,
     debug_counter: usize,
+}
+
+#[derive(Debug, Clone)]
+struct TimeControlEditorTarget {
+    params: crate::KeyframeTrackParams,
+    keyframe_index: usize,
+    object: aviutl2::generic::ObjectHandle,
+    effect_name: String,
+    effect_index: usize,
+    track_names: Vec<String>,
+    timecontrol: crate::curve::TimeControlBezier,
+    dirty: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -81,6 +94,7 @@ pub fn create_gui(
     cc.egui_ctx.set_fonts(aviutl2_eframe::aviutl2_fonts());
     Ok(Box::new(KeyframesGui {
         selected_object_info: None,
+        timecontrol_editor: None,
         debug_counter: 0,
     }))
 }
@@ -187,9 +201,13 @@ impl aviutl2_eframe::eframe::App for KeyframesGui {
                 if self.is_undo_mode() {
                     self.render_undo_mode_warning(ui);
                 }
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    self.render_selected_object_info(ui);
-                });
+                if self.timecontrol_editor.is_some() {
+                    self.render_timecontrol_editor(ui);
+                } else {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        self.render_selected_object_info(ui);
+                    });
+                }
             } else {
                 ui.label("Initializing...");
             }
@@ -406,7 +424,7 @@ impl KeyframesGui {
     }
 
     fn render_selected_object_info(&mut self, ui: &mut egui::Ui) {
-        let Some(selected_object_info) = &self.selected_object_info else {
+        let Some(selected_object_info) = self.selected_object_info.clone() else {
             ui.label("No object selected");
             return;
         };
@@ -440,12 +458,12 @@ impl KeyframesGui {
         }
         let info = crate::EDIT_HANDLE.get_edit_info();
         for effect in &selected_object_info.effects {
-            self.render_effect_info(ui, &info, selected_object_info, effect);
+            self.render_effect_info(ui, &info, &selected_object_info, effect);
         }
     }
 
     fn render_effect_info(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         info: &aviutl2::generic::EditInfo,
         object: &SelectedObjectInfo,
@@ -465,7 +483,7 @@ impl KeyframesGui {
     }
 
     fn render_keyframe_track_info(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         info: &aviutl2::generic::EditInfo,
         object: &SelectedObjectInfo,
@@ -576,7 +594,7 @@ impl KeyframesGui {
     }
 
     fn render_keyframe_section_interactions(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         painter: &egui::Painter,
         track_rect: egui::Rect,
@@ -612,9 +630,25 @@ impl KeyframesGui {
             }
 
             egui::containers::Popup::menu(&response).show(|ui| {
-                self.show_easing_menu(ui, keyframes, params, section.0, "", |new_keyframes| {
-                    self.update_track_keyframes(object, effect, track, section.0, new_keyframes);
-                });
+                self.show_easing_menu(
+                    ui,
+                    keyframes,
+                    params,
+                    object,
+                    effect,
+                    track,
+                    section.0,
+                    "",
+                    |new_keyframes| {
+                        Self::update_track_keyframes(
+                            object,
+                            effect,
+                            track,
+                            section.0,
+                            new_keyframes,
+                        );
+                    },
+                );
             });
         }
     }
@@ -644,7 +678,6 @@ impl KeyframesGui {
     }
 
     fn update_track_keyframes(
-        &self,
         object: &SelectedObjectInfo,
         effect: &EffectInfo,
         track: &KeyframeTrackInfo,
@@ -702,6 +735,215 @@ impl KeyframesGui {
                 );
             }
         }
+    }
+
+    fn update_track_keyframes_by_target(
+        target: &TimeControlEditorTarget,
+        new_keyframes: crate::curve::Keyframes,
+    ) -> Option<crate::KeyframeTrackParams> {
+        tracing::info!(
+            "Updating time control keyframe {:?} of track {:?} in effect {:?} to {:?}",
+            target.keyframe_index,
+            target.track_names,
+            target.effect_name,
+            &new_keyframes
+        );
+        let new_params = crate::KeyframeTrackParams::new();
+        crate::KEYFRAMES.insert(new_params, new_keyframes);
+        let edit_result = crate::EDIT_HANDLE
+            .call_edit_section(|edit| {
+                for name in &target.track_names {
+                    let mut before = edit.get_object_effect_item(
+                        target.object,
+                        &target.effect_name,
+                        target.effect_index,
+                        name,
+                    )?;
+                    new_params.set_params(&mut before)?;
+                    edit.set_object_effect_item(
+                        target.object,
+                        &target.effect_name,
+                        target.effect_index,
+                        name,
+                        &before,
+                    )?;
+                }
+                anyhow::Ok(())
+            })
+            .map_err(anyhow::Error::from)
+            .flatten();
+        match edit_result {
+            Ok(()) => Some(new_params),
+            Err(e) => {
+                tracing::error!(
+                    "Failed to update time control keyframe {:?} of track {:?} in effect {:?}: {:?}",
+                    target.keyframe_index,
+                    target.track_names,
+                    target.effect_name,
+                    e
+                );
+                None
+            }
+        }
+    }
+
+    fn render_timecontrol_editor(&mut self, ui: &mut egui::Ui) {
+        let Some(mut target) = self.timecontrol_editor.clone() else {
+            return;
+        };
+
+        ui.horizontal(|ui| {
+            if ui.button("戻る").clicked() {
+                self.timecontrol_editor = None;
+            }
+            ui.heading("時間制御");
+        });
+        ui.separator();
+
+        if self.timecontrol_editor.is_none() {
+            return;
+        }
+
+        let (changed, commit_requested) =
+            Self::show_timecontrol_bezier_editor(ui, &mut target.timecontrol);
+        target.dirty |= changed;
+
+        if commit_requested && target.dirty {
+            let Some(mut new_keyframes) = crate::KEYFRAMES
+                .get(&target.params)
+                .map(|keyframes| keyframes.clone())
+            else {
+                self.timecontrol_editor = None;
+                return;
+            };
+            let Some(crate::curve::Keyframe::Easing(kf_info)) =
+                new_keyframes.keyframes.get_mut(target.keyframe_index)
+            else {
+                self.timecontrol_editor = None;
+                return;
+            };
+            kf_info.timecontrol = target.timecontrol.clone();
+            if let Some(new_params) = Self::update_track_keyframes_by_target(&target, new_keyframes)
+            {
+                target.params = new_params;
+                target.dirty = false;
+            }
+        }
+
+        self.timecontrol_editor = Some(target);
+    }
+
+    fn show_timecontrol_bezier_editor(
+        ui: &mut egui::Ui,
+        timecontrol: &mut crate::curve::TimeControlBezier,
+    ) -> (bool, bool) {
+        let mut changed = false;
+        let mut commit_requested = false;
+        let available_size = ui.available_size();
+        let size = available_size.x.min(available_size.y).max(220.0);
+        let (response, painter) =
+            ui.allocate_painter(egui::Vec2::splat(size), egui::Sense::hover());
+        let rect = response.rect.shrink(12.0);
+
+        let to_screen = |point: [f64; 2]| {
+            egui::pos2(
+                rect.left() + point[0] as f32 * rect.width(),
+                rect.bottom() - point[1] as f32 * rect.height(),
+            )
+        };
+        let from_screen = |point: egui::Pos2| {
+            [
+                ((point.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64,
+                ((rect.bottom() - point.y) / rect.height()).clamp(0.0, 1.0) as f64,
+            ]
+        };
+
+        let grid_stroke = egui::Stroke::new(
+            1.0,
+            ui.visuals()
+                .widgets
+                .noninteractive
+                .fg_stroke
+                .color
+                .linear_multiply(0.25),
+        );
+        painter.rect_stroke(rect, 0.0, grid_stroke, egui::StrokeKind::Inside);
+        for i in 1..4 {
+            let t = i as f32 / 4.0;
+            painter.line_segment(
+                [
+                    egui::pos2(rect.left() + rect.width() * t, rect.top()),
+                    egui::pos2(rect.left() + rect.width() * t, rect.bottom()),
+                ],
+                grid_stroke,
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(rect.left(), rect.top() + rect.height() * t),
+                    egui::pos2(rect.right(), rect.top() + rect.height() * t),
+                ],
+                grid_stroke,
+            );
+        }
+
+        let start = to_screen([0.0, 0.0]);
+        let end = to_screen([1.0, 1.0]);
+        let control_points = [
+            to_screen(timecontrol.control_points[0]),
+            to_screen(timecontrol.control_points[1]),
+        ];
+        let control_stroke = egui::Stroke::new(
+            1.0,
+            ui.visuals()
+                .widgets
+                .noninteractive
+                .fg_stroke
+                .color
+                .linear_multiply(0.5),
+        );
+        painter.line_segment([start, control_points[0]], control_stroke);
+        painter.line_segment([control_points[0], control_points[1]], control_stroke);
+        painter.line_segment([control_points[1], end], control_stroke);
+
+        let curve_color = ui.visuals().widgets.active.fg_stroke.color;
+        let curve_stroke = egui::Stroke::new(2.0, curve_color);
+        let mut previous = start;
+        for i in 1..=48 {
+            let t = i as f64 / 48.0;
+            let point = timecontrol.point_at(t);
+            let current = to_screen(point);
+            painter.line_segment([previous, current], curve_stroke);
+            previous = current;
+        }
+
+        painter.circle_filled(start, 4.0, curve_color);
+        painter.circle_filled(end, 4.0, curve_color);
+        for (i, point) in control_points.into_iter().enumerate() {
+            let handle_rect = egui::Rect::from_center_size(point, egui::Vec2::splat(18.0));
+            let handle_response = ui.interact(
+                handle_rect,
+                ui.id().with(("timecontrol_control_point", i)),
+                egui::Sense::drag(),
+            );
+            if handle_response.dragged()
+                && let Some(pointer_pos) = handle_response.interact_pointer_pos()
+            {
+                let new_point = from_screen(pointer_pos);
+                if timecontrol.control_points[i] != new_point {
+                    timecontrol.control_points[i] = new_point;
+                    changed = true;
+                }
+            }
+            commit_requested |= handle_response.drag_stopped();
+            let color = if handle_response.hovered() || handle_response.dragged() {
+                ui.visuals().widgets.hovered.fg_stroke.color
+            } else {
+                curve_color
+            };
+            painter.circle_filled(to_screen(timecontrol.control_points[i]), 5.0, color);
+        }
+
+        (changed, commit_requested)
     }
 
     fn render_easing_labels(
@@ -863,10 +1105,13 @@ impl KeyframesGui {
     }
 
     fn show_easing_menu(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         keyframes: &crate::curve::Keyframes,
-        _params: &crate::KeyframeTrackParams,
+        params: &crate::KeyframeTrackParams,
+        object: &SelectedObjectInfo,
+        effect: &EffectInfo,
+        track: &KeyframeTrackInfo,
         index: usize,
         current_level: &str,
         update_keyframe: impl FnOnce(crate::curve::Keyframes),
@@ -899,9 +1144,13 @@ impl KeyframesGui {
         egui::ScrollArea::vertical().show(ui, |ui| {
             Self::show_midpoint_actions(ui, keyframes, index, current_level, &mut update_keyframe);
             if let Some(current_easing) = current_easing {
-                Self::show_current_easing_options(
+                self.show_current_easing_options(
                     ui,
                     keyframes,
+                    params,
+                    object,
+                    effect,
+                    track,
                     keyframe_index,
                     current_keyframe,
                     current_easing,
@@ -939,8 +1188,13 @@ impl KeyframesGui {
     }
 
     fn show_current_easing_options(
+        &mut self,
         ui: &mut egui::Ui,
         keyframes: &crate::curve::Keyframes,
+        params: &crate::KeyframeTrackParams,
+        object: &SelectedObjectInfo,
+        effect: &EffectInfo,
+        track: &KeyframeTrackInfo,
         keyframe_index: usize,
         current_keyframe: &crate::curve::EasingKeyframeInfo,
         current_easing: &crate::curve::Easing,
@@ -958,8 +1212,19 @@ impl KeyframesGui {
             );
         }
         if current_easing.has_timecontrol && ui.button("時間制御").clicked() {
-            tracing::warn!(
-                "Unimplemented: Opening time control dialog for section {} of track {:?} in effect {:?}",
+            self.timecontrol_editor = Some(TimeControlEditorTarget {
+                params: *params,
+                keyframe_index,
+                object: object.handle,
+                effect_name: effect.name.clone(),
+                effect_index: effect.index,
+                track_names: track.names.clone(),
+                timecontrol: current_keyframe.timecontrol.clone(),
+                dirty: false,
+            });
+            ui.close();
+            tracing::info!(
+                "Opening time control dialog for section {} of track {:?} in effect {:?}",
                 index,
                 current_easing.name,
                 current_level
@@ -1025,6 +1290,7 @@ impl KeyframesGui {
                 acceleration: easing.default_acceleration,
                 deceleration: easing.default_deceleration,
                 params: easing.params.values().cloned().collect(),
+                timecontrol: crate::curve::TimeControlBezier::default(),
             });
 
         if easing.ignore_midpoints {

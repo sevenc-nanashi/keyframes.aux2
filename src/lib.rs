@@ -181,6 +181,7 @@ impl aviutl2::generic::GenericPlugin for KeyframesAux2 {
     }
 
     fn on_project_save(&mut self, project: &mut aviutl2::generic::ProjectFile) {
+        project.clear_params();
         project
             .serialize("last_bank_id", &*CURRENT_BANK.lock().unwrap())
             .unwrap();
