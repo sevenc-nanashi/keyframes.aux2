@@ -243,7 +243,7 @@ fn load_effects() -> anyhow::Result<()> {
     tracing::info!("Loading easings...");
     let mut easings = vec![];
     let standard_easings =
-        crate::curve::Easing::from_multi_script(include_str!("../build/stdlib.tra2"));
+        crate::curve::Easing::from_multi_script(include_str!("../build/@embedded.tra2"));
     tracing::info!("Loaded standard easings: {}", standard_easings.len());
     easings.extend(standard_easings);
 

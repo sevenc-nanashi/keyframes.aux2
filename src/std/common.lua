@@ -2,8 +2,6 @@ local M = {}
 
 local EPS = 1.0e-12
 local HALF = 0.5
-local ROTATION_CONTROL_BLEND = 0.42500001192092896
-local RAND_MAX = 2147483647
 
 local function clamp(value, min_value, max_value)
 	if value < min_value then
@@ -88,10 +86,6 @@ local function quat_normalize(quat)
 	}
 end
 
-local function quat_conjugate(quat)
-	return { -quat[1], -quat[2], -quat[3], quat[4] }
-end
-
 local function quat_dot(a, b)
 	return a[1] * b[1] + a[2] * b[2] + a[3] * b[3] + a[4] * b[4]
 end
@@ -125,17 +119,6 @@ end
 
 local function quat_negate(quat)
 	return { -quat[1], -quat[2], -quat[3], -quat[4] }
-end
-
-local function quat_align(reference, quat)
-	if quat_dot(reference, quat) < 0.0 then
-		return quat_negate(quat)
-	end
-	return quat
-end
-
-local function quat_inverse(quat)
-	return quat_conjugate(quat_normalize(quat))
 end
 
 local function axis_angle_quat(axis, angle_rad)
@@ -220,40 +203,6 @@ local function quat_slerp(a, b, t)
 	return quat_add(quat_scale(a, s0), quat_scale(b, s1))
 end
 
-local function quat_log(quat)
-	quat = quat_normalize(quat)
-	local v_len = math.sqrt(quat[1] * quat[1] + quat[2] * quat[2] + quat[3] * quat[3])
-	if v_len <= EPS then
-		return { 0.0, 0.0, 0.0, 0.0 }
-	end
-	local angle = atan2(v_len, quat[4])
-	local scale = angle / v_len
-	return { quat[1] * scale, quat[2] * scale, quat[3] * scale, 0.0 }
-end
-
-local function quat_exp(quat)
-	local v_len = math.sqrt(quat[1] * quat[1] + quat[2] * quat[2] + quat[3] * quat[3])
-	local s = math.sin(v_len)
-	if v_len <= EPS then
-		return { quat[1], quat[2], quat[3], math.cos(v_len) }
-	end
-	local scale = s / v_len
-	return {
-		quat[1] * scale,
-		quat[2] * scale,
-		quat[3] * scale,
-		math.cos(v_len),
-	}
-end
-
-local function quat_squad_control(prev_q, cur_q, next_q)
-	local inv_cur = quat_inverse(cur_q)
-	local log1 = quat_log(quat_mul(inv_cur, prev_q))
-	local log2 = quat_log(quat_mul(inv_cur, next_q))
-	local blend = quat_scale(quat_add(log1, log2), -0.25)
-	return quat_normalize(quat_mul(cur_q, quat_exp(blend)))
-end
-
 local function build_rotation_series(values, period)
 	if #values == 0 then
 		return {}
@@ -305,41 +254,6 @@ local function rotation_component_from_quat(ctx, quat)
 	local euler = quat_to_euler_xyz(quat, ctx.rotation_order or "xyz")
 	local axis_index = clamp(ctx.axis_index or ctx.component or 1, 1, 3)
 	return euler[axis_index]
-end
-
-local function linear_rotate_group_value(ctx, axes)
-	local segment, t = resolve_segment(ctx, #axes[1])
-	local flags = get_flags(ctx)
-	local smooth_t = smooth_edge_value(
-		0.0,
-		1.0,
-		t,
-		flags.double_first and segment == 0,
-		flags.double_last and segment == #axes[1] - 2
-	)
-	local order = ctx.rotation_order or "xyz"
-	local q0 = euler_quat_at(axes, segment + 1, order)
-	local q1 = euler_quat_at(axes, segment + 2, order)
-	return rotation_component_from_quat(ctx, quat_slerp(q0, q1, smooth_t))
-end
-
-local function interpolation_rotate_group_value(ctx, axes)
-	local segment, t = resolve_segment(ctx, #axes[1])
-	local order = ctx.rotation_order or "xyz"
-	local q_prev = euler_quat_at(axes, segment, order)
-	local q_cur = euler_quat_at(axes, segment + 1, order)
-	local q_next = quat_align(q_cur, euler_quat_at(axes, segment + 2, order))
-	q_prev = quat_align(q_cur, q_prev)
-	local q_after = quat_align(q_next, euler_quat_at(axes, segment + 3, order))
-
-	local control_cur = quat_squad_control(q_prev, q_cur, q_next)
-	local control_next = quat_squad_control(q_cur, q_next, q_after)
-	local curve_cur = quat_slerp(q_cur, control_cur, ROTATION_CONTROL_BLEND)
-	local curve_next = quat_slerp(q_next, control_next, ROTATION_CONTROL_BLEND)
-	local curve = quat_slerp(curve_cur, curve_next, t)
-	local linear = quat_slerp(q_cur, q_next, t)
-	local blend = 4.0 * t * (1.0 - t)
-	return rotation_component_from_quat(ctx, quat_slerp(linear, curve, blend))
 end
 
 local function segment_lengths(axes, flags)
@@ -463,61 +377,6 @@ local function interpolation_value(ctx, values, lengths)
 	return catmull_rom(pm1, p0, p1, p2, len_prev, len_cur, len_next, t)
 end
 
-local function random_unit(seed, index)
-	local frame = obj.frame or 0
-	return obj.rand(0, RAND_MAX, seed + index * 65537, frame) / RAND_MAX
-end
-
-local function random_move_value(ctx, values)
-	if #values == 0 then
-		return 0.0
-	end
-	if #values == 1 then
-		return values[1]
-	end
-
-	local segment, _t = resolve_segment(ctx, #values)
-	local base = values[1]
-	local span = values[#values] - base
-	local seed = ctx.seed or 0
-
-	local function point(index)
-		return base + random_unit(seed, index) * span
-	end
-
-	local p0 = point(segment)
-	local p1 = point(segment + 1)
-	local p2 = point(segment + 2)
-	local p3 = point(segment + 3)
-
-	return catmull_rom(p0, p1, p2, p3, 1.0, 1.0, 1.0, _t)
-end
-
-local function speed_move_value(ctx, values)
-	if #values == 0 then
-		return 0.0
-	end
-	if #values == 1 then
-		return values[1]
-	end
-	return values[1] + values[2] * (ctx.t or 0.0)
-end
-
-local function teleport_value(ctx, values)
-	local segment = resolve_segment(ctx, #values)
-	return values[segment + 1] or values[#values] or 0.0
-end
-
-local function rotation_linear_value(ctx, values)
-	local period = ctx.rotation_period or ctx.angle_period or 360.0
-	return linear_value(ctx, build_rotation_series(values, period))
-end
-
-local function rotation_interpolation_value(ctx, values, lengths)
-	local period = ctx.rotation_period or ctx.angle_period or 360.0
-	return interpolation_value(ctx, build_rotation_series(values, period), lengths)
-end
-
 local function make_linked_values(point_count, link_index, link_count)
 	if not link_count or link_count <= 1 then
 		return nil
@@ -567,83 +426,19 @@ function M.make_ctx()
 	}
 end
 
-function M.linear_move()
-	local ctx = M.make_ctx()
-	return linear_value(ctx, normalize_values(ctx.values or {}, ctx.divisor))
-end
-
-function M.linear_speed()
-	local ctx = M.make_ctx()
-	local axes = collect_axes(ctx)
-	local segment, t = weighted_segment(ctx, axes)
-	return linear_value({
-		values = ctx.values,
-		divisor = ctx.divisor,
-		segment = segment,
-		local_t = t,
-		double_first = ctx.double_first,
-		double_last = ctx.double_last,
-		edge_flags = ctx.edge_flags,
-	}, normalize_values(ctx.values or {}, ctx.divisor))
-end
-
-function M.linear_rotate()
-	local ctx = M.make_ctx()
-	local axes = rotation_axes(ctx)
-	if axes then
-		return linear_rotate_group_value(ctx, axes)
-	end
-	return rotation_linear_value(ctx, normalize_values(ctx.values or {}, ctx.divisor))
-end
-
-function M.interpolation_move()
-	local ctx = M.make_ctx()
-	local values = normalize_values(ctx.values or {}, ctx.divisor)
-	local axes = collect_axes(ctx)
-	local lengths = segment_lengths(axes, get_flags(ctx))
-	return interpolation_value(ctx, values, lengths)
-end
-
-function M.interpolation_speed()
-	local ctx = M.make_ctx()
-	local axes = collect_axes(ctx)
-	local segment, t, lengths = weighted_segment(ctx, axes)
-	return interpolation_value({
-		values = ctx.values,
-		divisor = ctx.divisor,
-		segment = segment,
-		local_t = t,
-		double_first = ctx.double_first,
-		double_last = ctx.double_last,
-		edge_flags = ctx.edge_flags,
-	}, normalize_values(ctx.values or {}, ctx.divisor), lengths)
-end
-
-function M.interpolation_rotate()
-	local ctx = M.make_ctx()
-	local rotation_group = rotation_axes(ctx)
-	if rotation_group then
-		return interpolation_rotate_group_value(ctx, rotation_group)
-	end
-
-	local axes = collect_axes(ctx)
-	local lengths = segment_lengths(axes, get_flags(ctx))
-	return rotation_interpolation_value(ctx, normalize_values(ctx.values or {}, ctx.divisor), lengths)
-end
-
-function M.speed_move()
-	local ctx = M.make_ctx()
-	return speed_move_value(ctx, normalize_values(ctx.values or {}, ctx.divisor))
-end
-
-function M.random_move()
-	local ctx = M.make_ctx()
-	return random_move_value(ctx, normalize_values(ctx.values or {}, ctx.divisor))
-end
-
-function M.teleportation_move()
-	local ctx = M.make_ctx()
-	return teleport_value(ctx, normalize_values(ctx.values or {}, ctx.divisor))
-end
+M.build_rotation_series = build_rotation_series
+M.catmull_rom = catmull_rom
+M.collect_axes = collect_axes
+M.euler_quat_at = euler_quat_at
+M.get_flags = get_flags
+M.interpolation_value = interpolation_value
+M.linear_value = linear_value
+M.normalize_values = normalize_values
+M.quat_slerp = quat_slerp
+M.resolve_segment = resolve_segment
+M.rotation_component_from_quat = rotation_component_from_quat
+M.rotation_axes = rotation_axes
+M.segment_lengths = segment_lengths
+M.weighted_segment = weighted_segment
 
 return M

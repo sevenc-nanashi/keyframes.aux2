@@ -10,9 +10,9 @@ destination = "Script/keyframes.aux2.tra2"
 source = "build/keyframes.aux2.tra2"
 build = "aulua build"
 
-[artifacts.stdlib-tra2]
-destination = "Script/stdlib.tra2"
-source = "build/stdlib.tra2"
+[artifacts.embedded-tra2]
+destination = "Script/@embedded.tra2"
+source = "build/@embedded.tra2"
 build = "aulua build"
 
 [artifacts.keyframes-aux2]

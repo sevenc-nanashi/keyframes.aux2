@@ -1,6 +1,7 @@
 --speed:0,0
 
 ---$embed
-local curves = require("std_curves")
+local curves = require("common")
 
-return curves.linear_move()
+local ctx = curves.make_ctx()
+return curves.linear_value(ctx, curves.normalize_values(ctx.values or {}, ctx.divisor))

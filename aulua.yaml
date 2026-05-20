@@ -2,7 +2,7 @@
 
 build:
   embed_search_dirs:
-    - src
+    - src/std
   out_dir: build
 
 scripts:
