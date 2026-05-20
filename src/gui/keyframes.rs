@@ -1,0 +1,682 @@
+use super::*;
+use aviutl2_eframe::egui;
+
+impl KeyframesGui {
+    pub(super) fn render_selected_object_info(&mut self, ui: &mut egui::Ui) {
+        let Some(selected_object_info) = self.selected_object_info.clone() else {
+            ui.label("No object selected");
+            return;
+        };
+        // ui.label(format!("Selected Object: {}", selected_object_info.name));
+        if ui
+            .add(
+                egui::Label::new(
+                    egui::RichText::new(format!("Selected Object: {}", selected_object_info.name))
+                        .color(
+                            if crate::module::DEBUG_MODE.load(std::sync::atomic::Ordering::Relaxed)
+                            {
+                                aviutl2::config::get_color_code("LogWarn")
+                                    .expect("Null文字はない")
+                                    .expect("そもそもこれが落ちるなら本体も落ちる")
+                                    .pipe(|(r, g, b)| egui::Color32::from_rgb(r, g, b))
+                            } else {
+                                ui.visuals().widgets.noninteractive.fg_stroke.color
+                            },
+                        ),
+                )
+                .sense(egui::Sense::click()),
+            )
+            .clicked()
+        {
+            self.debug_counter += 1;
+            if self.debug_counter >= 5 {
+                let debug_mode = self.debug_counter.is_multiple_of(2);
+                tracing::info!("Setting debug mode to {}", debug_mode);
+                crate::module::DEBUG_MODE.store(debug_mode, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        let info = crate::EDIT_HANDLE.get_edit_info();
+        for effect in &selected_object_info.effects {
+            self.render_effect_info(ui, &info, &selected_object_info, effect);
+        }
+    }
+
+    fn render_effect_info(
+        &mut self,
+        ui: &mut egui::Ui,
+        info: &aviutl2::generic::EditInfo,
+        object: &SelectedObjectInfo,
+        effect: &EffectInfo,
+    ) {
+        egui::containers::CollapsingHeader::new(format!("Effect: {}", effect.name))
+            .id_salt((effect.index, &effect.name))
+            .enabled(!effect.keyframe_tracks.is_empty())
+            .open(effect.keyframe_tracks.is_empty().then_some(false))
+            .show(ui, |ui| {
+                for (params, track) in &effect.keyframe_tracks {
+                    ui.push_id(&track.names, |ui| {
+                        self.render_keyframe_track_info(ui, info, object, effect, params, track);
+                    });
+                }
+            });
+    }
+
+    fn render_keyframe_track_info(
+        &mut self,
+        ui: &mut egui::Ui,
+        info: &aviutl2::generic::EditInfo,
+        object: &SelectedObjectInfo,
+        effect: &EffectInfo,
+        params: &crate::KeyframeTrackParams,
+        track: &KeyframeTrackInfo,
+    ) {
+        ui.horizontal_wrapped(|ui| {
+            for name in &track.names {
+                ui.menu_button(name, |ui| {
+                    if ui.button("分離").clicked() {
+                        self.detach_keyframe_track(object, effect, params, track, name);
+                    }
+                });
+            }
+        });
+        let (response, painter) = ui.allocate_painter(
+            ui.available_size().tap_mut(|s| {
+                s.y = 24.0;
+            }),
+            aviutl2_eframe::egui::Sense::hover(),
+        );
+        let (current_object_color, selected_object_color) = get_colors(&effect.effect_type);
+        let num_divisions = response.rect.width() as usize / 10;
+        if num_divisions == 0 {
+            return;
+        }
+
+        let total_frames = object.frames.last().unwrap() - object.frames.first().unwrap();
+        self.render_track_background(
+            &painter,
+            response.rect,
+            &current_object_color,
+            num_divisions,
+        );
+
+        let Some(keyframes) = crate::KEYFRAMES.get(params) else {
+            self.render_frame_cursor(&painter, info, object, response.rect, total_frames);
+            return;
+        };
+        let sections = Self::track_sections(object, total_frames);
+        if sections.len() != keyframes.keyframes.len() - 1 {
+            return;
+        }
+
+        self.render_keyframe_section_interactions(
+            ui,
+            &painter,
+            response.rect,
+            object,
+            effect,
+            params,
+            track,
+            &keyframes,
+            &sections,
+            selected_object_color,
+        );
+        self.render_easing_labels(
+            ui,
+            &painter,
+            response.rect,
+            object,
+            &keyframes,
+            total_frames,
+        );
+        self.render_midpoint_lines(
+            ui,
+            &painter,
+            response.rect,
+            object,
+            &keyframes,
+            total_frames,
+        );
+        self.render_frame_cursor(&painter, info, object, response.rect, total_frames);
+    }
+
+    fn render_track_background(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        current_object_color: &[egui::Color32],
+        num_divisions: usize,
+    ) {
+        let width_per_section = rect.width() / num_divisions as f32;
+        for i in 0..num_divisions {
+            let mut section_rect = rect;
+            section_rect.set_left(rect.left() + i as f32 * width_per_section);
+            section_rect.set_right((section_rect.left() + width_per_section).min(rect.right()));
+            let position = i as f32 / num_divisions as f32;
+            let color = current_object_color[position.floor() as usize].lerp_to_gamma(
+                current_object_color
+                    [(position.ceil() as usize).min(current_object_color.len() - 1)],
+                position.fract(),
+            );
+            painter.rect_filled(section_rect, 0.0, color);
+        }
+    }
+
+    fn track_sections(object: &SelectedObjectInfo, total_frames: usize) -> Vec<(usize, f32, f32)> {
+        let mut sections = vec![];
+        for i in 0..object.frames.len() - 1 {
+            let left_position = (object.frames[i] - object.frames[0]) as f32 / total_frames as f32;
+            let right_position =
+                (object.frames[i + 1] - object.frames[0]) as f32 / total_frames as f32;
+            sections.push((i, left_position, right_position));
+        }
+        sections
+    }
+
+    fn render_keyframe_section_interactions(
+        &mut self,
+        ui: &mut egui::Ui,
+        painter: &egui::Painter,
+        track_rect: egui::Rect,
+        object: &SelectedObjectInfo,
+        effect: &EffectInfo,
+        params: &crate::KeyframeTrackParams,
+        track: &KeyframeTrackInfo,
+        keyframes: &crate::curve::Keyframes,
+        sections: &[(usize, f32, f32)],
+        selected_object_color: egui::Color32,
+    ) {
+        let crate::curve::Keyframe::Easing(ref initial_kf_info) = keyframes.keyframes[0] else {
+            unreachable!();
+        };
+        let mut kf_info = initial_kf_info;
+
+        for section in sections {
+            if let crate::curve::Keyframe::Easing(ref new_kf_info) = keyframes.keyframes[section.0]
+            {
+                kf_info = new_kf_info;
+            }
+
+            let rect = Self::section_rect(track_rect, section.1, section.2);
+            let response = ui
+                .interact(
+                    rect,
+                    ui.id().with(section.0),
+                    aviutl2_eframe::egui::Sense::click(),
+                )
+                .on_hover_text(Self::easing_hover_text(kf_info));
+            if response.hovered() {
+                painter.rect_filled(rect, 0.0, selected_object_color);
+            }
+
+            egui::containers::Popup::menu(&response).show(|ui| {
+                self.show_easing_menu(
+                    ui,
+                    keyframes,
+                    params,
+                    object,
+                    effect,
+                    track,
+                    section.0,
+                    "",
+                    |new_keyframes| {
+                        Self::update_track_keyframes(
+                            object,
+                            effect,
+                            track,
+                            section.0,
+                            new_keyframes,
+                        );
+                    },
+                );
+            });
+        }
+    }
+
+    fn section_rect(track_rect: egui::Rect, left: f32, right: f32) -> egui::Rect {
+        let mut rect = track_rect;
+        rect.set_left(track_rect.left() + left * track_rect.width());
+        rect.set_right(track_rect.left() + right * track_rect.width());
+        rect
+    }
+
+    fn easing_hover_text(kf_info: &crate::curve::EasingKeyframeInfo) -> String {
+        if kf_info.params.is_empty() {
+            return kf_info.easing.clone();
+        }
+
+        format!(
+            "{}：{}",
+            kf_info.easing,
+            kf_info
+                .params
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
+    fn update_track_keyframes(
+        object: &SelectedObjectInfo,
+        effect: &EffectInfo,
+        track: &KeyframeTrackInfo,
+        section_index: usize,
+        new_keyframes: crate::curve::Keyframes,
+    ) {
+        tracing::info!(
+            "Updating keyframe {:?} of track {:?} in effect {:?} to {:?}",
+            section_index,
+            track.names,
+            effect.name,
+            &new_keyframes
+        );
+        let new_params = crate::KeyframeTrackParams::new();
+        crate::KEYFRAMES.insert(new_params, new_keyframes);
+        let edit_result = crate::EDIT_HANDLE
+            .call_edit_section(|edit| {
+                for name in &track.names {
+                    let mut before = edit.get_object_effect_item(
+                        object.handle,
+                        &effect.name,
+                        effect.index,
+                        name,
+                    )?;
+                    new_params.set_params(&mut before)?;
+                    edit.set_object_effect_item(
+                        object.handle,
+                        &effect.name,
+                        effect.index,
+                        name,
+                        &before,
+                    )?;
+                }
+                anyhow::Ok(())
+            })
+            .map_err(anyhow::Error::from)
+            .flatten();
+        match edit_result {
+            Ok(()) => {
+                tracing::info!(
+                    "Updated keyframe track params for section {} of track {:?} in effect {:?} to {:?}",
+                    section_index,
+                    track.names,
+                    effect.name,
+                    new_params
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to update keyframe track params for section {} of track {:?} in effect {:?}: {:?}",
+                    section_index,
+                    track.names,
+                    effect.name,
+                    e
+                );
+            }
+        }
+    }
+
+    fn render_easing_labels(
+        &self,
+        ui: &egui::Ui,
+        painter: &egui::Painter,
+        track_rect: egui::Rect,
+        object: &SelectedObjectInfo,
+        keyframes: &crate::curve::Keyframes,
+        total_frames: usize,
+    ) {
+        for (i, frame) in object.frames.iter().enumerate() {
+            if i == object.frames.len() - 1 {
+                continue;
+            }
+            let easing = match keyframes.keyframes[i] {
+                crate::curve::Keyframe::Easing(ref easing) => easing.easing.as_str(),
+                _ => "-",
+            };
+            let left_position = (*frame - object.frames[0]) as f32 / total_frames as f32;
+            let right_position =
+                (object.frames[i + 1] - object.frames[0]) as f32 / total_frames as f32;
+            let mut rect = Self::section_rect(track_rect, left_position, right_position);
+            rect.set_left(rect.left() + ui.spacing().button_padding.x);
+
+            let color = if matches!(keyframes.keyframes[i], crate::curve::Keyframe::Ignored) {
+                ui.visuals()
+                    .widgets
+                    .noninteractive
+                    .fg_stroke
+                    .color
+                    .linear_multiply(0.25)
+            } else {
+                ui.visuals().widgets.noninteractive.fg_stroke.color
+            };
+            let mut layout = egui::text::LayoutJob::default();
+            layout.append(
+                easing,
+                0.0,
+                egui::TextFormat {
+                    font_id: egui::FontId::default(),
+                    color,
+                    ..Default::default()
+                },
+            );
+            layout.wrap = egui::text::TextWrapping::truncate_at_width(rect.width());
+            let galley = painter.layout_job(layout);
+            painter.galley(
+                rect.left_center().tap_mut(|pos| {
+                    pos.y -= galley.size().y / 2.0;
+                }),
+                galley,
+                color,
+            );
+        }
+    }
+
+    fn render_midpoint_lines(
+        &self,
+        ui: &egui::Ui,
+        painter: &egui::Painter,
+        track_rect: egui::Rect,
+        object: &SelectedObjectInfo,
+        keyframes: &crate::curve::Keyframes,
+        total_frames: usize,
+    ) {
+        for (i, frame) in object.frames.iter().enumerate() {
+            if i == 0 || i == object.frames.len() - 1 {
+                continue;
+            }
+            let position = (*frame - object.frames.first().unwrap()) as f32 / total_frames as f32;
+            let mut rect = track_rect;
+            rect.set_left(rect.left() + position * track_rect.width() - 1.0);
+            rect.set_right(rect.left() + 1.0);
+            let color = if matches!(keyframes.keyframes[i], crate::curve::Keyframe::Ignored) {
+                ui.visuals()
+                    .widgets
+                    .noninteractive
+                    .bg_fill
+                    .linear_multiply(0.25)
+            } else {
+                ui.visuals().widgets.noninteractive.bg_fill
+            };
+            painter.rect_filled(rect, 0.0, color);
+        }
+    }
+
+    fn render_frame_cursor(
+        &self,
+        painter: &egui::Painter,
+        info: &aviutl2::generic::EditInfo,
+        object: &SelectedObjectInfo,
+        track_rect: egui::Rect,
+        total_frames: usize,
+    ) {
+        if *object.frames.first().unwrap() <= info.frame
+            && info.frame <= *object.frames.last().unwrap()
+        {
+            let position =
+                (info.frame - object.frames.first().unwrap()) as f32 / total_frames as f32;
+            let mut rect = track_rect;
+            rect.set_left(rect.left() + position * track_rect.width() - 1.0);
+            rect.set_right(rect.left() + 1.0);
+            let selected_line = aviutl2::config::get_color_code("FrameCursor")
+                .expect("Null文字はない")
+                .expect("そもそもこれが落ちるなら本体も落ちる")
+                .pipe(|(r, g, b)| egui::Color32::from_rgb(r, g, b));
+            painter.rect_filled(rect, 0.0, selected_line);
+        }
+    }
+
+    fn detach_keyframe_track(
+        &self,
+        object: &SelectedObjectInfo,
+        effect: &EffectInfo,
+        params: &crate::KeyframeTrackParams,
+        track: &KeyframeTrackInfo,
+        name: &str,
+    ) {
+        let res = crate::EDIT_HANDLE
+            .call_edit_section(|edit| {
+                let new_params = crate::KeyframeTrackParams::new();
+                if let Some(keyframes) = crate::KEYFRAMES.get(params) {
+                    crate::KEYFRAMES.insert(new_params, keyframes.clone());
+                }
+                let mut before =
+                    edit.get_object_effect_item(object.handle, &effect.name, effect.index, name)?;
+                new_params.set_params(&mut before)?;
+                edit.set_object_effect_item(
+                    object.handle,
+                    &effect.name,
+                    effect.index,
+                    name,
+                    &before,
+                )?;
+                anyhow::Ok(())
+            })
+            .map_err(anyhow::Error::from)
+            .flatten();
+        match res {
+            Ok(()) => {
+                tracing::info!(
+                    "Detached keyframe track {:?} of effect {:?} in object {:?}",
+                    track.names,
+                    effect.name,
+                    object.name
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to detach keyframe track {:?} of effect {:?} in object {:?}: {:?}",
+                    track.names,
+                    effect.name,
+                    object.name,
+                    e
+                );
+            }
+        }
+    }
+
+    fn show_easing_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        keyframes: &crate::curve::Keyframes,
+        params: &crate::KeyframeTrackParams,
+        object: &SelectedObjectInfo,
+        effect: &EffectInfo,
+        track: &KeyframeTrackInfo,
+        index: usize,
+        current_level: &str,
+        update_keyframe: impl FnOnce(crate::curve::Keyframes),
+    ) {
+        let default = indexmap::IndexMap::new();
+        let easings = crate::EASINGS.get().unwrap_or(&default);
+        let mut update_keyframe_once = Some(update_keyframe);
+        let mut update_keyframe = |new_keyframes: crate::curve::Keyframes| {
+            if let Some(f) = update_keyframe_once.take() {
+                f(new_keyframes);
+            }
+        };
+
+        let (keyframe_index, current_keyframe) = &keyframes
+            .keyframes
+            .iter()
+            .enumerate()
+            .take(index + 1)
+            .rfind(|(_, k)| matches!(k, crate::curve::Keyframe::Easing(_)))
+            .expect(
+                "少なくとも0フレーム目にはイージングが設定されているはずなので、必ず見つかるはず",
+            );
+        let keyframe_index = *keyframe_index;
+        let crate::curve::Keyframe::Easing(current_keyframe) = current_keyframe else {
+            unreachable!();
+        };
+        let current_easing = easings.get(&current_keyframe.easing);
+
+        // TODO: ちゃんとlabelごとに階層にする
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            Self::show_midpoint_actions(ui, keyframes, index, current_level, &mut update_keyframe);
+            if let Some(current_easing) = current_easing {
+                self.show_current_easing_options(
+                    ui,
+                    keyframes,
+                    params,
+                    object,
+                    effect,
+                    track,
+                    keyframe_index,
+                    current_keyframe,
+                    current_easing,
+                    index,
+                    current_level,
+                    &mut update_keyframe,
+                );
+            }
+            Self::show_easing_choices(ui, keyframes, index, easings, &mut update_keyframe);
+        });
+    }
+
+    fn show_midpoint_actions(
+        ui: &mut egui::Ui,
+        keyframes: &crate::curve::Keyframes,
+        index: usize,
+        current_level: &str,
+        update_keyframe: &mut impl FnMut(crate::curve::Keyframes),
+    ) {
+        if !current_level.is_empty() || index == 0 {
+            return;
+        }
+
+        if ui.button("引き継ぎ").clicked() {
+            let mut new_keyframes = keyframes.clone();
+            new_keyframes.keyframes[index] = crate::curve::Keyframe::Midpoint;
+            update_keyframe(new_keyframes);
+        }
+        if ui.button("無視").clicked() {
+            let mut new_keyframes = keyframes.clone();
+            new_keyframes.keyframes[index] = crate::curve::Keyframe::Ignored;
+            update_keyframe(new_keyframes);
+        }
+        ui.separator();
+    }
+
+    fn show_current_easing_options(
+        &mut self,
+        ui: &mut egui::Ui,
+        keyframes: &crate::curve::Keyframes,
+        params: &crate::KeyframeTrackParams,
+        object: &SelectedObjectInfo,
+        effect: &EffectInfo,
+        track: &KeyframeTrackInfo,
+        keyframe_index: usize,
+        current_keyframe: &crate::curve::EasingKeyframeInfo,
+        current_easing: &crate::curve::Easing,
+        index: usize,
+        current_level: &str,
+        update_keyframe: &mut impl FnMut(crate::curve::Keyframes),
+    ) {
+        if current_easing.has_speed {
+            Self::show_speed_options(
+                ui,
+                keyframes,
+                keyframe_index,
+                current_keyframe,
+                update_keyframe,
+            );
+        }
+        if current_easing.has_timecontrol && ui.button("時間制御").clicked() {
+            self.timecontrol_editor = Some(TimeControlEditorTarget {
+                params: *params,
+                keyframe_index,
+                object: object.handle,
+                effect_name: effect.name.clone(),
+                effect_index: effect.index,
+                track_names: track.names.clone(),
+                timecontrol: current_keyframe.timecontrol.clone(),
+                selected_point: 0,
+                context_menu_position: None,
+                dirty: false,
+            });
+            ui.close();
+            tracing::info!(
+                "Opening time control dialog for section {} of track {:?} in effect {:?}",
+                index,
+                current_easing.name,
+                current_level
+            );
+        }
+        ui.separator();
+    }
+
+    fn show_speed_options(
+        ui: &mut egui::Ui,
+        keyframes: &crate::curve::Keyframes,
+        keyframe_index: usize,
+        current_keyframe: &crate::curve::EasingKeyframeInfo,
+        update_keyframe: &mut impl FnMut(crate::curve::Keyframes),
+    ) {
+        let mut current_acceleration = current_keyframe.acceleration;
+        if ui.checkbox(&mut current_acceleration, "加速").changed() {
+            let mut new_keyframes = keyframes.clone();
+            let crate::curve::Keyframe::Easing(ref mut k) = new_keyframes.keyframes[keyframe_index]
+            else {
+                unreachable!();
+            };
+            k.acceleration = current_acceleration;
+            update_keyframe(new_keyframes);
+        }
+
+        let mut current_deceleration = current_keyframe.deceleration;
+        if ui.checkbox(&mut current_deceleration, "減速").changed() {
+            let mut new_keyframes = keyframes.clone();
+            let crate::curve::Keyframe::Easing(ref mut k) = new_keyframes.keyframes[keyframe_index]
+            else {
+                unreachable!();
+            };
+            k.deceleration = current_deceleration;
+            update_keyframe(new_keyframes);
+        }
+    }
+
+    fn show_easing_choices(
+        ui: &mut egui::Ui,
+        keyframes: &crate::curve::Keyframes,
+        index: usize,
+        easings: &indexmap::IndexMap<String, crate::curve::Easing>,
+        update_keyframe: &mut impl FnMut(crate::curve::Keyframes),
+    ) {
+        for easing in easings.values() {
+            if ui.button(&easing.name).clicked() {
+                let new_keyframes = Self::keyframes_with_easing(keyframes, index, easing);
+                update_keyframe(new_keyframes);
+            }
+        }
+    }
+
+    fn keyframes_with_easing(
+        keyframes: &crate::curve::Keyframes,
+        index: usize,
+        easing: &crate::curve::Easing,
+    ) -> crate::curve::Keyframes {
+        let mut new_keyframes = keyframes.clone();
+        new_keyframes.keyframes[index] =
+            crate::curve::Keyframe::Easing(crate::curve::EasingKeyframeInfo {
+                easing: easing.name.clone(),
+                acceleration: easing.default_acceleration,
+                deceleration: easing.default_deceleration,
+                params: easing.params.values().cloned().collect(),
+                timecontrol: crate::curve::TimeControlBezier::default(),
+            });
+
+        if easing.ignore_midpoints {
+            Self::ignore_following_midpoints(&mut new_keyframes, index);
+        }
+        new_keyframes
+    }
+
+    fn ignore_following_midpoints(keyframes: &mut crate::curve::Keyframes, index: usize) {
+        for i in index + 1..keyframes.keyframes.len() {
+            if !matches!(keyframes.keyframes[i], crate::curve::Keyframe::Midpoint) {
+                break;
+            }
+            keyframes.keyframes[i] = crate::curve::Keyframe::Ignored;
+        }
+    }
+}
