@@ -207,27 +207,29 @@ impl KeyframesGui {
                 painter.rect_filled(rect, 0.0, selected_object_color);
             }
 
-            egui::containers::Popup::menu(&response).show(|ui| {
-                self.show_easing_menu(
-                    ui,
-                    keyframes,
-                    params,
-                    object,
-                    effect,
-                    track,
-                    section.0,
-                    "",
-                    |new_keyframes| {
-                        Self::update_track_keyframes(
-                            object,
-                            effect,
-                            track,
-                            section.0,
-                            new_keyframes,
-                        );
-                    },
-                );
-            });
+            egui::containers::Popup::menu(&response)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| {
+                    self.show_easing_menu(
+                        ui,
+                        keyframes,
+                        params,
+                        object,
+                        effect,
+                        track,
+                        section.0,
+                        "",
+                        |new_keyframes| {
+                            Self::update_track_keyframes(
+                                object,
+                                effect,
+                                track,
+                                section.0,
+                                new_keyframes,
+                            );
+                        },
+                    );
+                });
         }
     }
 
@@ -261,7 +263,7 @@ impl KeyframesGui {
         track: &KeyframeTrackInfo,
         section_index: usize,
         new_keyframes: crate::keyframe::Keyframes,
-    ) {
+    ) -> Option<crate::KeyframeTrackParams> {
         tracing::info!(
             "Updating keyframe {:?} of track {:?} in effect {:?} to {:?}",
             section_index,
@@ -302,6 +304,7 @@ impl KeyframesGui {
                     effect.name,
                     new_params
                 );
+                Some(new_params)
             }
             Err(e) => {
                 tracing::error!(
@@ -311,6 +314,7 @@ impl KeyframesGui {
                     effect.name,
                     e
                 );
+                None
             }
         }
     }
@@ -497,6 +501,7 @@ impl KeyframesGui {
 
         // TODO: ちゃんとlabelごとに階層にする
         egui::ScrollArea::vertical().show(ui, |ui| {
+            let all_height = ui.available_height();
             Self::show_midpoint_actions(ui, keyframes, index, current_level, &mut update_keyframe);
             if let Some(current_easing) = current_easing {
                 self.show_current_easing_options(
@@ -514,7 +519,12 @@ impl KeyframesGui {
                     &mut update_keyframe,
                 );
             }
-            Self::show_easing_choices(ui, keyframes, index, easings, &mut update_keyframe);
+            let available_height = ui.available_height();
+            ui.menu_button("移動方法", |ui| {
+                egui::containers::ScrollArea::vertical().show(ui, |ui| {
+                    Self::show_easing_choices(ui, keyframes, index, easings, &mut update_keyframe);
+                });
+            });
         });
     }
 
@@ -529,12 +539,24 @@ impl KeyframesGui {
             return;
         }
 
-        if ui.button("中間点").clicked() {
+        if ui
+            .add(egui::Button::new("中間点").selected(matches!(
+                keyframes.keyframes[index],
+                crate::keyframe::Keyframe::Midpoint
+            )))
+            .clicked()
+        {
             let mut new_keyframes = keyframes.clone();
             new_keyframes.keyframes[index] = crate::keyframe::Keyframe::Midpoint;
             update_keyframe(new_keyframes);
         }
-        if ui.button("継続").clicked() {
+        if ui
+            .add(egui::Button::new("継続").selected(matches!(
+                keyframes.keyframes[index],
+                crate::keyframe::Keyframe::Ignored
+            )))
+            .clicked()
+        {
             let mut new_keyframes = keyframes.clone();
             new_keyframes.keyframes[index] = crate::keyframe::Keyframe::Ignored;
             update_keyframe(new_keyframes);
@@ -558,6 +580,7 @@ impl KeyframesGui {
         current_level: &str,
         update_keyframe: &mut impl FnMut(crate::keyframe::Keyframes),
     ) {
+        let mut has_anything = false;
         if current_easing.has_speed {
             Self::show_speed_options(
                 ui,
@@ -566,32 +589,149 @@ impl KeyframesGui {
                 current_keyframe,
                 update_keyframe,
             );
+            has_anything = true;
         }
-        if current_easing.has_timecontrol && ui.button("時間制御").clicked() {
-            self.timecontrol_editor = Some(TimeControlEditorTarget {
-                params: *params,
+        has_anything |= Self::show_param_options(
+            ui,
+            keyframes,
+            params,
+            keyframe_index,
+            current_keyframe,
+            current_easing,
+            update_keyframe,
+        );
+        if current_easing.has_timecontrol {
+            if ui.button("時間制御").clicked() {
+                self.timecontrol_editor = Some(TimeControlEditorTarget {
+                    params: *params,
+                    keyframe_index,
+                    object: object.handle,
+                    effect_name: effect.name.clone(),
+                    effect_index: effect.index,
+                    track_names: track.names.clone(),
+                    timecontrol: current_keyframe.timecontrol.clone(),
+                    selected_point: 0,
+                    context_menu_position: None,
+                    vertical_zoom: 1.0,
+                    vertical_scroll: 0.5,
+                    preset_panel_width: f32::NAN,
+                    dirty: false,
+                });
+                ui.close();
+                tracing::info!(
+                    "Opening time control dialog for section {} of track {:?} in effect {:?}",
+                    index,
+                    current_easing.name,
+                    current_level
+                );
+            }
+            has_anything = true;
+        }
+        if has_anything {
+            ui.separator();
+        }
+    }
+
+    fn show_param_options(
+        ui: &mut egui::Ui,
+        keyframes: &crate::keyframe::Keyframes,
+        params: &crate::KeyframeTrackParams,
+        keyframe_index: usize,
+        current_keyframe: &crate::keyframe::EasingKeyframeInfo,
+        current_easing: &crate::keyframe::Easing,
+        update_keyframe: &mut impl FnMut(crate::keyframe::Keyframes),
+    ) -> bool {
+        if current_easing.params.is_empty() {
+            return false;
+        }
+
+        for (param_index, (param_name, default_value)) in current_easing.params.iter().enumerate() {
+            let current_value = current_keyframe
+                .params
+                .get(param_index)
+                .copied()
+                .unwrap_or(*default_value);
+            let id = ui.id().with((
+                "easing_param",
+                *params,
                 keyframe_index,
-                object: object.handle,
-                effect_name: effect.name.clone(),
-                effect_index: effect.index,
-                track_names: track.names.clone(),
-                timecontrol: current_keyframe.timecontrol.clone(),
-                selected_point: 0,
-                context_menu_position: None,
-                vertical_zoom: 1.0,
-                vertical_scroll: 0.5,
-                preset_panel_width: f32::NAN,
-                dirty: false,
+                param_index,
+                param_name,
+            ));
+            let mut value = ui
+                .data(|data| data.get_temp::<String>(id))
+                .unwrap_or_else(|| Self::format_easing_param_value(current_value));
+
+            ui.horizontal(|ui| {
+                ui.label(format!("{param_name}："));
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut value)
+                        .desired_width(80.0)
+                        .margin(egui::Margin::symmetric(4, 0))
+                        .char_limit(32),
+                );
+
+                if response.changed() {
+                    ui.data_mut(|data| {
+                        data.insert_temp(id, value.clone());
+                    });
+                }
+
+                if response.lost_focus() {
+                    ui.data_mut(|data| {
+                        data.remove::<String>(id);
+                    });
+
+                    let Ok(value) = value.trim().parse::<f64>() else {
+                        return;
+                    };
+                    if (value - current_value).abs() > f64::EPSILON {
+                        let mut new_keyframes = keyframes.clone();
+                        Self::set_easing_param_value(
+                            &mut new_keyframes,
+                            current_easing,
+                            keyframe_index,
+                            param_index,
+                            value,
+                        );
+                        update_keyframe(new_keyframes);
+                    }
+                }
             });
-            ui.close();
-            tracing::info!(
-                "Opening time control dialog for section {} of track {:?} in effect {:?}",
-                index,
-                current_easing.name,
-                current_level
-            );
         }
-        ui.separator();
+        true
+    }
+
+    fn format_easing_param_value(value: f64) -> String {
+        let formatted = format!("{value:.3}");
+        formatted
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    }
+
+    fn set_easing_param_value(
+        keyframes: &mut crate::keyframe::Keyframes,
+        current_easing: &crate::keyframe::Easing,
+        keyframe_index: usize,
+        param_index: usize,
+        value: f64,
+    ) {
+        let crate::keyframe::Keyframe::Easing(ref mut keyframe) =
+            keyframes.keyframes[keyframe_index]
+        else {
+            unreachable!();
+        };
+        while keyframe.params.len() <= param_index {
+            let default_value = current_easing
+                .params
+                .values()
+                .nth(keyframe.params.len())
+                .copied()
+                .unwrap_or_default();
+            keyframe.params.push(default_value);
+        }
+        keyframe.params[param_index] = value;
     }
 
     fn show_speed_options(
@@ -634,7 +774,13 @@ impl KeyframesGui {
         update_keyframe: &mut impl FnMut(crate::keyframe::Keyframes),
     ) {
         for easing in easings.values() {
-            if ui.button(&easing.name).clicked() {
+            if ui
+                .add(egui::Button::new(&easing.name).selected(matches!(
+                    keyframes.keyframes[index],
+                    crate::keyframe::Keyframe::Easing(ref k)
+                    if k.easing == easing.name)))
+                .clicked()
+            {
                 let new_keyframes = Self::keyframes_with_easing(keyframes, index, easing);
                 update_keyframe(new_keyframes);
             }
