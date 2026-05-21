@@ -197,7 +197,15 @@ impl KeyframesGui {
                     .layout(egui::Layout::top_down(egui::Align::Min)),
             );
             preset_ui.set_clip_rect(preset_rect);
-            preset_ui.label("プリセット");
+            if let Some(timecontrol) = Self::show_timecontrol_presets(&mut preset_ui) {
+                target.timecontrol = timecontrol;
+                target.selected_point = 0;
+                target.context_menu_position = None;
+                target.vertical_zoom = 1.0;
+                target.vertical_scroll = 0.0;
+                result.0 = true;
+                result.1 = true;
+            }
         }
         let (changed, commit_requested) = result;
         target.dirty |= changed;
@@ -532,6 +540,114 @@ impl KeyframesGui {
             painter.line_segment([start, out_handle], control_stroke);
             painter.line_segment([in_handle, end], control_stroke);
         }
+    }
+
+    fn show_timecontrol_presets(ui: &mut egui::Ui) -> Option<crate::keyframe::TimeControl> {
+        let mut selected = None;
+        ui.label("プリセット");
+        ui.add_space(4.0);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let available_width = ui.available_width();
+                let spacing = 8.0;
+                let target_width = 240.0;
+                let columns = ((available_width + spacing) / (target_width + spacing))
+                    .floor()
+                    .max(1.0);
+                let preset_width =
+                    ((available_width - spacing * (columns - 1.0)) / columns).max(target_width);
+                let row_height = 58.0;
+                let presets = crate::keyframe::timecontrol_presets();
+
+                for row in presets.chunks(columns as usize) {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = spacing;
+                        for preset in row {
+                            let (rect, response) = ui.allocate_exact_size(
+                                egui::vec2(preset_width, row_height),
+                                egui::Sense::click(),
+                            );
+                            let hovered = response.hovered();
+                            if hovered {
+                                ui.painter().rect_filled(
+                                    rect,
+                                    4.0,
+                                    GUI_COLORS.object_section.linear_multiply(1.15),
+                                );
+                            }
+
+                            let text_rect = egui::Rect::from_min_max(
+                                rect.left_top() + egui::vec2(6.0, 4.0),
+                                egui::pos2(rect.left() + 104.0, rect.bottom() - 4.0),
+                            );
+                            ui.painter().text(
+                                text_rect.left_top(),
+                                egui::Align2::LEFT_TOP,
+                                preset.name,
+                                egui::FontId::proportional(13.0),
+                                GUI_COLORS.text,
+                            );
+                            ui.painter().text(
+                                text_rect.left_bottom(),
+                                egui::Align2::LEFT_BOTTOM,
+                                preset.category,
+                                egui::FontId::proportional(11.0),
+                                GUI_COLORS.text.linear_multiply(0.75),
+                            );
+
+                            let preview_rect = egui::Rect::from_min_max(
+                                egui::pos2(text_rect.right() + 6.0, rect.top() + 6.0),
+                                egui::pos2(rect.right() - 6.0, rect.bottom() - 6.0),
+                            );
+                            if preview_rect.width() > 8.0 && preview_rect.height() > 8.0 {
+                                Self::draw_timecontrol_preset_preview(
+                                    ui.painter(),
+                                    &preset.timecontrol,
+                                    preview_rect,
+                                );
+                            }
+
+                            if response.double_clicked() {
+                                selected = Some(preset.timecontrol.clone());
+                            }
+                        }
+                    });
+                    ui.add_space(spacing);
+                    if selected.is_some() {
+                        break;
+                    }
+                }
+            });
+        selected
+    }
+
+    fn draw_timecontrol_preset_preview(
+        painter: &egui::Painter,
+        timecontrol: &crate::keyframe::TimeControl,
+        rect: egui::Rect,
+    ) {
+        let (min_y, max_y) = Self::timecontrol_vertical_bounds(timecontrol);
+        let viewport = TimeControlViewport { rect, min_y, max_y };
+        painter.rect_stroke(
+            rect,
+            2.0,
+            egui::Stroke::new(1.0, GUI_COLORS.grid_line),
+            egui::StrokeKind::Inside,
+        );
+        for y in [0.0, 1.0] {
+            if min_y <= y && y <= max_y {
+                let y_pos = viewport.graph_to_screen([0.0, y]).y;
+                painter.line_segment(
+                    [
+                        egui::pos2(rect.left(), y_pos),
+                        egui::pos2(rect.right(), y_pos),
+                    ],
+                    egui::Stroke::new(1.0, GUI_COLORS.grid_line.linear_multiply(0.7)),
+                );
+            }
+        }
+        Self::draw_timecontrol_curve(painter, timecontrol, viewport);
     }
 
     fn show_timecontrol_handles(

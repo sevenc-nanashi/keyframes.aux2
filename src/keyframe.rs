@@ -113,11 +113,15 @@ pub struct TimeControlElastic {
     pub frequency: f64,
     #[serde(default = "TimeControlElastic::default_decay")]
     pub decay: f64,
+    #[serde(default)]
+    pub reversed: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TimeControlBounce {
     pub vertex: [f64; 2],
+    #[serde(default)]
+    pub reversed: bool,
 }
 
 impl Default for TimeControl {
@@ -132,6 +136,7 @@ impl Default for TimeControlElastic {
             amplitude: Self::default_amplitude(),
             frequency: Self::default_frequency(),
             decay: Self::default_decay(),
+            reversed: false,
         }
     }
 }
@@ -140,6 +145,7 @@ impl Default for TimeControlBounce {
     fn default() -> Self {
         Self {
             vertex: [0.55, 0.75],
+            reversed: false,
         }
     }
 }
@@ -229,6 +235,25 @@ impl TimeControl {
 }
 
 impl TimeControlBezier {
+    pub fn from_cubic_bezier(x1: f64, y1: f64, x2: f64, y2: f64) -> Self {
+        Self {
+            points: vec![
+                TimeControlBezierPoint {
+                    position: [0.0, 0.0],
+                    in_handle: None,
+                    out_handle: Some([x1, y1]),
+                    handles_separated: false,
+                },
+                TimeControlBezierPoint {
+                    position: [1.0, 1.0],
+                    in_handle: Some([x2, y2]),
+                    out_handle: None,
+                    handles_separated: false,
+                },
+            ],
+        }
+    }
+
     pub fn y_at_x(&self, x: f64) -> f64 {
         let x = x.clamp(0.0, 1.0);
         let segment_index = self.segment_index_at_x(x);
@@ -372,6 +397,13 @@ impl TimeControlElastic {
     fn y_at_x(&self, x: f64) -> f64 {
         // https://github.com/mimaraka/aviutl-plugin-curve_editor/blob/main/curve_editor/curve_elastic.cpp
         let progress = x.clamp(0.0, 1.0);
+        if self.reversed {
+            return 1.0 - self.y_at_x_unreversed(1.0 - progress);
+        }
+        self.y_at_x_unreversed(progress)
+    }
+
+    fn y_at_x_unreversed(&self, progress: f64) -> f64 {
         let amplitude = self.amplitude.clamp(0.0, 1.0);
         let frequency = self.frequency.max(0.5);
         let decay = self.decay.max(1.0);
@@ -432,6 +464,13 @@ impl TimeControlBounce {
     fn y_at_x(&self, x: f64) -> f64 {
         // https://github.com/mimaraka/aviutl-plugin-curve_editor/blob/main/curve_editor/curve_bounce.cpp
         let progress = x.clamp(0.0, 1.0);
+        if self.reversed {
+            return 1.0 - self.y_at_x_unreversed(1.0 - progress);
+        }
+        self.y_at_x_unreversed(progress)
+    }
+
+    fn y_at_x_unreversed(&self, progress: f64) -> f64 {
         let handle_x = self.vertex[0].clamp(0.001, 0.999);
         let handle_y = self.vertex[1].clamp(0.001, 1.0);
         let cor = (1.0 - handle_y).sqrt().clamp(0.001, 0.999);
@@ -459,6 +498,59 @@ impl TimeControlBounce {
 
         (1.0 + ret).clamp(0.0, 1.0)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct TimeControlPreset {
+    pub name: &'static str,
+    pub category: &'static str,
+    pub timecontrol: TimeControl,
+}
+
+pub fn timecontrol_presets() -> Vec<TimeControlPreset> {
+    fn bezier(
+        name: &'static str,
+        category: &'static str,
+        cubic_bezier: [f64; 4],
+    ) -> TimeControlPreset {
+        TimeControlPreset {
+            name,
+            category,
+            timecontrol: TimeControl::Bezier(TimeControlBezier::from_cubic_bezier(
+                cubic_bezier[0],
+                cubic_bezier[1],
+                cubic_bezier[2],
+                cubic_bezier[3],
+            )),
+        }
+    }
+    fn elastic(name: &'static str) -> TimeControlPreset {
+        TimeControlPreset {
+            name,
+            category: "Elastic",
+            timecontrol: TimeControl::Elastic(TimeControlElastic::default()),
+        }
+    }
+    fn bounce(name: &'static str) -> TimeControlPreset {
+        TimeControlPreset {
+            name,
+            category: "Bounce",
+            timecontrol: TimeControl::Bounce(TimeControlBounce::default()),
+        }
+    }
+
+    vec![
+        bezier("easeInSine", "Sine", [0.12, 0.0, 0.39, 0.0]),
+        bezier("easeInQuad", "Quad", [0.11, 0.0, 0.5, 0.0]),
+        bezier("easeInCubic", "Cubic", [0.32, 0.0, 0.67, 0.0]),
+        bezier("easeInQuart", "Quart", [0.5, 0.0, 0.75, 0.0]),
+        bezier("easeInQuint", "Quint", [0.64, 0.0, 0.78, 0.0]),
+        bezier("easeInExpo", "Expo", [0.7, 0.0, 0.84, 0.0]),
+        bezier("easeInCirc", "Circ", [0.55, 0.0, 1.0, 0.45]),
+        bezier("easeInBack", "Back", [0.36, 0.0, 0.66, -0.56]),
+        elastic("easeOutElastic"),
+        bounce("easeOutBounce"),
+    ]
 }
 
 #[derive(Debug, Clone)]
@@ -589,6 +681,19 @@ mod tests {
     }
 
     #[test]
+    fn elastic_reversed_flips_out_curve() {
+        let out = TimeControlElastic::default();
+        let reversed = TimeControlElastic {
+            reversed: true,
+            ..TimeControlElastic::default()
+        };
+
+        for x in [0.125, 0.25, 0.5, 0.75] {
+            assert!((reversed.y_at_x(x) - (1.0 - out.y_at_x(1.0 - x))).abs() < 0.000001);
+        }
+    }
+
+    #[test]
     fn bounce_timecontrol_starts_ends_and_passes_vertex() {
         let timecontrol = TimeControl::default_for_mode(TimeControlMode::Bounce);
         let TimeControl::Bounce(bounce) = &timecontrol else {
@@ -610,5 +715,41 @@ mod tests {
 
         timecontrol.set_editable_vertex([0.5, -0.5]);
         assert_eq!(timecontrol.editable_vertex().unwrap(), [0.5, 0.0]);
+    }
+
+    #[test]
+    fn bounce_reversed_flips_out_curve() {
+        let out = TimeControlBounce::default();
+        let reversed = TimeControlBounce {
+            reversed: true,
+            ..TimeControlBounce::default()
+        };
+
+        for x in [0.125, 0.25, 0.5, 0.75] {
+            assert!((reversed.y_at_x(x) - (1.0 - out.y_at_x(1.0 - x))).abs() < 0.000001);
+        }
+    }
+
+    #[test]
+    fn presets_use_easings_net_cubic_beziers_and_filtered_modes() {
+        let presets = timecontrol_presets();
+
+        let Some(ease_in_sine) = presets.iter().find(|preset| preset.name == "easeInSine") else {
+            unreachable!();
+        };
+        let TimeControl::Bezier(bezier) = &ease_in_sine.timecontrol else {
+            unreachable!();
+        };
+
+        assert_eq!(bezier.points[0].out_handle, Some([0.12, 0.0]));
+        assert_eq!(bezier.points[1].in_handle, Some([0.39, 0.0]));
+        assert!(presets.iter().any(|preset| preset.name == "easeInBack"));
+        assert!(presets.iter().any(|preset| preset.name == "easeOutBounce"));
+        assert!(presets.iter().any(|preset| preset.name == "easeOutElastic"));
+        assert!(!presets.iter().any(|preset| preset.name == "linear"));
+        assert!(!presets.iter().any(|preset| preset.name == "easeOutSine"));
+        assert!(!presets.iter().any(|preset| preset.name == "easeInBounce"));
+        assert!(!presets.iter().any(|preset| preset.name == "easeInElastic"));
+        assert!(!presets.iter().any(|preset| preset.name.contains("InOut")));
     }
 }
