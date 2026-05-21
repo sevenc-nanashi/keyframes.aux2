@@ -2,6 +2,38 @@ use super::*;
 use anyhow::Context;
 use aviutl2_eframe::egui;
 
+#[derive(Clone, Copy)]
+struct TimeControlViewport {
+    rect: egui::Rect,
+    min_y: f64,
+    max_y: f64,
+}
+
+impl TimeControlViewport {
+    fn graph_to_screen(self, point: [f64; 2]) -> egui::Pos2 {
+        egui::pos2(
+            self.rect.left() + point[0] as f32 * self.rect.width(),
+            self.rect.bottom()
+                - ((point[1] - self.min_y) / (self.max_y - self.min_y)) as f32 * self.rect.height(),
+        )
+    }
+
+    fn screen_to_graph(self, point: egui::Pos2) -> [f64; 2] {
+        [
+            ((point.x - self.rect.left()) / self.rect.width()) as f64,
+            self.min_y
+                + ((self.rect.bottom() - point.y) / self.rect.height()) as f64
+                    * (self.max_y - self.min_y),
+        ]
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TimeControlDragModifiers {
+    shift: bool,
+    alt: bool,
+}
+
 impl KeyframesGui {
     fn update_track_keyframes_by_target(
         target: &TimeControlEditorTarget,
@@ -207,7 +239,6 @@ impl KeyframesGui {
     ) -> (bool, bool) {
         let mut changed = false;
         let mut commit_requested = false;
-        let mut structure_changed = false;
         *selected_point = (*selected_point).min(timecontrol.points.len().saturating_sub(1));
 
         let available_size = ui.available_size();
@@ -243,39 +274,24 @@ impl KeyframesGui {
                     *vertical_zoom =
                         (*vertical_zoom * (scroll_delta * 0.01).exp()).clamp(0.25, 8.0);
                 }
-            } else if scroll_delta.abs() > f64::EPSILON && rect.height() > f32::EPSILON {
-                if movable_y_range > f64::EPSILON {
-                    let scroll_ratio =
-                        scroll_delta / rect.height() as f64 * visible_y_range / movable_y_range;
-                    *vertical_scroll = (*vertical_scroll + scroll_ratio).clamp(0.0, 1.0);
-                }
+            } else if scroll_delta.abs() > f64::EPSILON
+                && rect.height() > f32::EPSILON
+                && movable_y_range > f64::EPSILON
+            {
+                let scroll_ratio =
+                    scroll_delta / rect.height() as f64 * visible_y_range / movable_y_range;
+                *vertical_scroll = (*vertical_scroll + scroll_ratio).clamp(0.0, 1.0);
             }
         }
         *vertical_scroll = (*vertical_scroll).clamp(0.0, 1.0);
         let min_y = scroll_min_y + movable_y_range * *vertical_scroll;
         let max_y = min_y + visible_y_range;
-        let keep_y_in_scroll_range = |vertical_scroll: &mut f64, y: f64| {
-            if y < min_y {
-                *vertical_scroll = 0.0;
-            } else if y > max_y {
-                *vertical_scroll = 1.0;
-            }
-        };
+        let viewport = TimeControlViewport { rect, min_y, max_y };
 
-        let to_screen = |point: [f64; 2]| {
-            egui::pos2(
-                rect.left() + point[0] as f32 * rect.width(),
-                rect.bottom() - ((point[1] - min_y) / (max_y - min_y)) as f32 * rect.height(),
-            )
-        };
-        let from_screen = |point: egui::Pos2| {
-            [
-                ((point.x - rect.left()) / rect.width()) as f64,
-                min_y + ((rect.bottom() - point.y) / rect.height()) as f64 * (max_y - min_y),
-            ]
-        };
         if response.secondary_clicked() {
-            *context_menu_position = response.interact_pointer_pos().map(from_screen);
+            *context_menu_position = response
+                .interact_pointer_pos()
+                .map(|pos| viewport.screen_to_graph(pos));
         }
         response.context_menu(|ui| {
             if ui.button("中継点追加").clicked() {
@@ -289,263 +305,40 @@ impl KeyframesGui {
             }
         });
 
-        let grid_stroke = egui::Stroke::new(1.0, GUI_COLORS.grid_line);
-        let strong_grid_stroke = egui::Stroke::new(1.5, GUI_COLORS.grid_line.linear_multiply(1.35));
-        let base_graph_rect =
-            egui::Rect::from_min_max(to_screen([0.0, 1.0]), to_screen([1.0, 0.0]));
-        let horizontal_grid_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.left(), rect.top()),
-            egui::pos2(rect.right(), rect.bottom()),
-        );
-        for i in 1..4 {
-            let x = rect.left() + rect.width() * i as f32 / 4.0;
-            painter.line_segment(
-                [
-                    egui::pos2(x, response.rect.top()),
-                    egui::pos2(x, response.rect.bottom()),
-                ],
-                grid_stroke,
-            );
-        }
-        let start_grid_y = (min_y * 4.0).floor() as i32;
-        let end_grid_y = (max_y * 4.0).ceil() as i32;
-        let grid_label_font = egui::FontId::proportional(11.0);
-        for i in start_grid_y..=end_grid_y {
-            let y = i as f64 / 4.0;
-            let stroke = if y % 1.0 == 0.0 {
-                strong_grid_stroke
-            } else {
-                grid_stroke
-            };
-            let y_pos = to_screen([0.0, y]).y;
-            painter.line_segment(
-                [
-                    egui::pos2(horizontal_grid_rect.left(), y_pos),
-                    egui::pos2(horizontal_grid_rect.right(), y_pos),
-                ],
-                stroke,
-            );
-            painter.text(
-                egui::pos2(horizontal_grid_rect.left() - 6.0, y_pos),
-                egui::Align2::RIGHT_CENTER,
-                Self::format_timecontrol_grid_label(y),
-                grid_label_font.clone(),
-                GUI_COLORS.text,
-            );
-        }
-        painter.line_segment(
-            [
-                egui::pos2(horizontal_grid_rect.left(), response.rect.top()),
-                egui::pos2(horizontal_grid_rect.left(), response.rect.bottom()),
-            ],
-            strong_grid_stroke,
-        );
-        painter.line_segment(
-            [
-                egui::pos2(horizontal_grid_rect.right(), response.rect.top()),
-                egui::pos2(horizontal_grid_rect.right(), response.rect.bottom()),
-            ],
-            strong_grid_stroke,
-        );
-        painter.rect_stroke(
-            base_graph_rect,
-            0.0,
-            strong_grid_stroke,
-            egui::StrokeKind::Inside,
-        );
+        Self::draw_timecontrol_grid(&painter, response.rect, viewport);
+        Self::draw_timecontrol_curve(&painter, timecontrol, viewport);
+        Self::draw_timecontrol_control_lines(&painter, timecontrol, viewport);
 
-        let curve_color = GUI_COLORS.zoom_gauge;
-        let curve_stroke = egui::Stroke::new(2.0, curve_color);
-        for segment_index in 0..timecontrol.points.len().saturating_sub(1) {
-            let mut previous = to_screen(timecontrol.points[segment_index].position);
-            for i in 1..=24 {
-                let t = i as f64 / 24.0;
-                let point = timecontrol.segment_point_at(segment_index, t);
-                let current = to_screen(point);
-                painter.line_segment([previous, current], curve_stroke);
-                previous = current;
-            }
+        let (handle_changed, handle_commit_requested, structure_changed) =
+            Self::show_timecontrol_handles(
+                ui,
+                &painter,
+                timecontrol,
+                selected_point,
+                context_menu_position,
+                viewport,
+                vertical_scroll,
+            );
+        changed |= handle_changed;
+        commit_requested |= handle_commit_requested;
+        if structure_changed {
+            return (changed, commit_requested);
         }
 
-        let control_stroke = egui::Stroke::new(1.0, GUI_COLORS.anchor_line);
-        for segment_index in 0..timecontrol.points.len().saturating_sub(1) {
-            let start = to_screen(timecontrol.points[segment_index].position);
-            let end = to_screen(timecontrol.points[segment_index + 1].position);
-            let out_handle = to_screen(
-                timecontrol.points[segment_index]
-                    .out_handle
-                    .unwrap_or(timecontrol.points[segment_index].position),
+        let (anchor_changed, anchor_commit_requested, structure_changed) =
+            Self::show_timecontrol_anchors(
+                ui,
+                &painter,
+                timecontrol,
+                selected_point,
+                context_menu_position,
+                viewport,
+                vertical_scroll,
             );
-            let in_handle = to_screen(
-                timecontrol.points[segment_index + 1]
-                    .in_handle
-                    .unwrap_or(timecontrol.points[segment_index + 1].position),
-            );
-            painter.line_segment([start, out_handle], control_stroke);
-            painter.line_segment([in_handle, end], control_stroke);
-        }
-
-        for point_index in 0..timecontrol.points.len() {
-            for handle_kind in [TimeControlHandleKind::In, TimeControlHandleKind::Out] {
-                let Some(handle) = (match handle_kind {
-                    TimeControlHandleKind::In => timecontrol.points[point_index].in_handle,
-                    TimeControlHandleKind::Out => timecontrol.points[point_index].out_handle,
-                }) else {
-                    continue;
-                };
-
-                let handle_pos = to_screen(handle);
-                let handle_rect = egui::Rect::from_center_size(handle_pos, egui::Vec2::splat(18.0));
-                let handle_response = ui.interact(
-                    handle_rect,
-                    ui.id()
-                        .with(("timecontrol_handle", point_index, handle_kind.id())),
-                    egui::Sense::click_and_drag(),
-                );
-                if handle_response.clicked() || handle_response.dragged() {
-                    *selected_point = point_index;
-                }
-                if handle_response.secondary_clicked() {
-                    *selected_point = point_index;
-                    *context_menu_position =
-                        handle_response.interact_pointer_pos().map(from_screen);
-                }
-                if handle_response.dragged()
-                    && let Some(pointer_pos) = handle_response.interact_pointer_pos()
-                {
-                    let (shift, alt) = ui.input(|i| (i.modifiers.shift, i.modifiers.alt));
-                    let mut position = from_screen(pointer_pos);
-                    if alt {
-                        position = Self::snap_timecontrol_position(position, 0.1);
-                    }
-                    if shift {
-                        position[1] = timecontrol.points[point_index].position[1];
-                    }
-                    let new_point = Self::constrain_timecontrol_handle_position(
-                        timecontrol,
-                        point_index,
-                        handle_kind,
-                        position,
-                    );
-                    let changed_handle = match handle_kind {
-                        TimeControlHandleKind::In => {
-                            timecontrol.points[point_index].in_handle != Some(new_point)
-                        }
-                        TimeControlHandleKind::Out => {
-                            timecontrol.points[point_index].out_handle != Some(new_point)
-                        }
-                    };
-                    if changed_handle {
-                        match handle_kind {
-                            TimeControlHandleKind::In => {
-                                timecontrol.points[point_index].in_handle = Some(new_point);
-                                if !timecontrol.points[point_index].handles_separated {
-                                    Self::mirror_timecontrol_handle(
-                                        timecontrol,
-                                        point_index,
-                                        false,
-                                    );
-                                }
-                            }
-                            TimeControlHandleKind::Out => {
-                                timecontrol.points[point_index].out_handle = Some(new_point);
-                                if !timecontrol.points[point_index].handles_separated {
-                                    Self::mirror_timecontrol_handle(timecontrol, point_index, true);
-                                }
-                            }
-                        }
-                        changed = true;
-                        keep_y_in_scroll_range(vertical_scroll, new_point[1]);
-                    }
-                }
-                commit_requested |= handle_response.drag_stopped();
-                let color = if handle_response.hovered() || handle_response.dragged() {
-                    GUI_COLORS.anchor_hover
-                } else {
-                    GUI_COLORS.anchor
-                };
-                painter.circle_filled(handle_pos, 4.0, color.linear_multiply(0.85));
-                handle_response.context_menu(|ui| {
-                    if ui.button("中継点追加").clicked() {
-                        *selected_point = Self::insert_timecontrol_point(
-                            timecontrol,
-                            context_menu_position.unwrap_or_else(|| from_screen(handle_pos)),
-                        );
-                        changed = true;
-                        commit_requested = true;
-                        structure_changed = true;
-                        ui.close();
-                    }
-                    ui.separator();
-                    if Self::show_timecontrol_handle_menu(ui, timecontrol, selected_point) {
-                        changed = true;
-                        commit_requested = true;
-                    }
-                });
-                if structure_changed {
-                    return (changed, commit_requested);
-                }
-            }
-        }
-
-        for point_index in 0..timecontrol.points.len() {
-            let point = to_screen(timecontrol.points[point_index].position);
-            let handle_rect = egui::Rect::from_center_size(point, egui::Vec2::splat(18.0));
-            let handle_response = ui.interact(
-                handle_rect,
-                ui.id().with(("timecontrol_anchor", point_index)),
-                egui::Sense::click_and_drag(),
-            );
-            if handle_response.clicked() || handle_response.dragged() {
-                *selected_point = point_index;
-            }
-            if handle_response.secondary_clicked() {
-                *selected_point = point_index;
-                *context_menu_position = handle_response.interact_pointer_pos().map(from_screen);
-            }
-            if handle_response.dragged()
-                && let Some(pointer_pos) = handle_response.interact_pointer_pos()
-            {
-                let alt = ui.input(|i| i.modifiers.alt);
-                let mut new_position = from_screen(pointer_pos);
-                if alt {
-                    new_position = Self::snap_timecontrol_position(new_position, 0.1);
-                }
-                if Self::move_timecontrol_anchor(timecontrol, point_index, new_position) {
-                    changed = true;
-                    keep_y_in_scroll_range(vertical_scroll, new_position[1]);
-                }
-            }
-            commit_requested |= handle_response.drag_stopped();
-            let color = if handle_response.hovered()
-                || handle_response.dragged()
-                || point_index == *selected_point
-            {
-                GUI_COLORS.anchor_select
-            } else {
-                GUI_COLORS.anchor
-            };
-            // painter.circle_filled(point, 5.0, color);
-            painter.rect_filled(
-                egui::Rect::from_center_size(point, egui::Vec2::splat(10.0)),
-                2.0,
-                color,
-            );
-            let before_len = timecontrol.points.len();
-            handle_response.context_menu(|ui| {
-                if Self::show_timecontrol_anchor_menu(
-                    ui,
-                    timecontrol,
-                    selected_point,
-                    context_menu_position.unwrap_or_else(|| from_screen(point)),
-                ) {
-                    changed = true;
-                    commit_requested = true;
-                }
-            });
-            if timecontrol.points.len() != before_len {
-                return (changed, commit_requested);
-            }
+        changed |= anchor_changed;
+        commit_requested |= anchor_commit_requested;
+        if structure_changed {
+            return (changed, commit_requested);
         }
 
         (changed, commit_requested)
@@ -564,6 +357,305 @@ impl KeyframesGui {
             }
         }
         (min_y, max_y)
+    }
+
+    fn draw_timecontrol_grid(
+        painter: &egui::Painter,
+        response_rect: egui::Rect,
+        viewport: TimeControlViewport,
+    ) {
+        let grid_stroke = egui::Stroke::new(1.0, GUI_COLORS.grid_line);
+        let strong_grid_stroke = egui::Stroke::new(1.5, GUI_COLORS.grid_line.linear_multiply(1.35));
+        let graph_rect = egui::Rect::from_min_max(
+            viewport.graph_to_screen([0.0, 1.0]),
+            viewport.graph_to_screen([1.0, 0.0]),
+        );
+
+        for i in 1..4 {
+            let x = viewport.rect.left() + viewport.rect.width() * i as f32 / 4.0;
+            painter.line_segment(
+                [
+                    egui::pos2(x, response_rect.top()),
+                    egui::pos2(x, response_rect.bottom()),
+                ],
+                grid_stroke,
+            );
+        }
+
+        let start_grid_y = (viewport.min_y * 4.0).floor() as i32;
+        let end_grid_y = (viewport.max_y * 4.0).ceil() as i32;
+        let grid_label_font = egui::FontId::proportional(11.0);
+        for i in start_grid_y..=end_grid_y {
+            let y = i as f64 / 4.0;
+            let stroke = if y % 1.0 == 0.0 {
+                strong_grid_stroke
+            } else {
+                grid_stroke
+            };
+            let y_pos = viewport.graph_to_screen([0.0, y]).y;
+            painter.line_segment(
+                [
+                    egui::pos2(viewport.rect.left(), y_pos),
+                    egui::pos2(viewport.rect.right(), y_pos),
+                ],
+                stroke,
+            );
+            painter.text(
+                egui::pos2(viewport.rect.left() - 6.0, y_pos),
+                egui::Align2::RIGHT_CENTER,
+                Self::format_timecontrol_grid_label(y),
+                grid_label_font.clone(),
+                GUI_COLORS.text,
+            );
+        }
+
+        for x in [viewport.rect.left(), viewport.rect.right()] {
+            painter.line_segment(
+                [
+                    egui::pos2(x, response_rect.top()),
+                    egui::pos2(x, response_rect.bottom()),
+                ],
+                strong_grid_stroke,
+            );
+        }
+        painter.rect_stroke(
+            graph_rect,
+            0.0,
+            strong_grid_stroke,
+            egui::StrokeKind::Inside,
+        );
+    }
+
+    fn draw_timecontrol_curve(
+        painter: &egui::Painter,
+        timecontrol: &crate::keyframe::TimeControlBezier,
+        viewport: TimeControlViewport,
+    ) {
+        let curve_stroke = egui::Stroke::new(2.0, GUI_COLORS.zoom_gauge);
+        for segment_index in 0..timecontrol.points.len().saturating_sub(1) {
+            let mut previous = viewport.graph_to_screen(timecontrol.points[segment_index].position);
+            for i in 1..=24 {
+                let t = i as f64 / 24.0;
+                let point = timecontrol.segment_point_at(segment_index, t);
+                let current = viewport.graph_to_screen(point);
+                painter.line_segment([previous, current], curve_stroke);
+                previous = current;
+            }
+        }
+    }
+
+    fn draw_timecontrol_control_lines(
+        painter: &egui::Painter,
+        timecontrol: &crate::keyframe::TimeControlBezier,
+        viewport: TimeControlViewport,
+    ) {
+        let control_stroke = egui::Stroke::new(1.0, GUI_COLORS.anchor_line);
+        for segment_index in 0..timecontrol.points.len().saturating_sub(1) {
+            let start = viewport.graph_to_screen(timecontrol.points[segment_index].position);
+            let end = viewport.graph_to_screen(timecontrol.points[segment_index + 1].position);
+            let out_handle = viewport.graph_to_screen(
+                timecontrol.points[segment_index]
+                    .out_handle
+                    .unwrap_or(timecontrol.points[segment_index].position),
+            );
+            let in_handle = viewport.graph_to_screen(
+                timecontrol.points[segment_index + 1]
+                    .in_handle
+                    .unwrap_or(timecontrol.points[segment_index + 1].position),
+            );
+            painter.line_segment([start, out_handle], control_stroke);
+            painter.line_segment([in_handle, end], control_stroke);
+        }
+    }
+
+    fn show_timecontrol_handles(
+        ui: &mut egui::Ui,
+        painter: &egui::Painter,
+        timecontrol: &mut crate::keyframe::TimeControlBezier,
+        selected_point: &mut usize,
+        context_menu_position: &mut Option<[f64; 2]>,
+        viewport: TimeControlViewport,
+        vertical_scroll: &mut f64,
+    ) -> (bool, bool, bool) {
+        let mut changed = false;
+        let mut commit_requested = false;
+        let mut structure_changed = false;
+
+        for point_index in 0..timecontrol.points.len() {
+            for handle_kind in [TimeControlHandleKind::In, TimeControlHandleKind::Out] {
+                let Some(handle) = (match handle_kind {
+                    TimeControlHandleKind::In => timecontrol.points[point_index].in_handle,
+                    TimeControlHandleKind::Out => timecontrol.points[point_index].out_handle,
+                }) else {
+                    continue;
+                };
+
+                let handle_pos = viewport.graph_to_screen(handle);
+                let handle_rect = egui::Rect::from_center_size(handle_pos, egui::Vec2::splat(18.0));
+                let handle_response = ui.interact(
+                    handle_rect,
+                    ui.id()
+                        .with(("timecontrol_handle", point_index, handle_kind.id())),
+                    egui::Sense::click_and_drag(),
+                );
+                if handle_response.clicked() || handle_response.dragged() {
+                    *selected_point = point_index;
+                }
+                if handle_response.secondary_clicked() {
+                    *selected_point = point_index;
+                    *context_menu_position = handle_response
+                        .interact_pointer_pos()
+                        .map(|pos| viewport.screen_to_graph(pos));
+                }
+                if handle_response.dragged()
+                    && let Some(pointer_pos) = handle_response.interact_pointer_pos()
+                {
+                    let position = Self::timecontrol_drag_position(
+                        viewport.screen_to_graph(pointer_pos),
+                        Self::timecontrol_drag_modifiers(ui),
+                        Some(timecontrol.points[point_index].position[1]),
+                    );
+                    let new_point = Self::constrain_timecontrol_handle_position(
+                        timecontrol,
+                        point_index,
+                        handle_kind,
+                        position,
+                    );
+                    let changed_handle = match handle_kind {
+                        TimeControlHandleKind::In => {
+                            timecontrol.points[point_index].in_handle != Some(new_point)
+                        }
+                        TimeControlHandleKind::Out => {
+                            timecontrol.points[point_index].out_handle != Some(new_point)
+                        }
+                    };
+                    if changed_handle {
+                        Self::set_timecontrol_handle(
+                            timecontrol,
+                            point_index,
+                            handle_kind,
+                            new_point,
+                        );
+                        changed = true;
+                        Self::keep_timecontrol_y_in_scroll_range(
+                            vertical_scroll,
+                            viewport,
+                            new_point[1],
+                        );
+                    }
+                }
+                commit_requested |= handle_response.drag_stopped();
+                let color = if handle_response.hovered() || handle_response.dragged() {
+                    GUI_COLORS.anchor_hover
+                } else {
+                    GUI_COLORS.anchor
+                };
+                painter.circle_filled(handle_pos, 4.0, color.linear_multiply(0.85));
+                handle_response.context_menu(|ui| {
+                    if ui.button("中継点追加").clicked() {
+                        *selected_point = Self::insert_timecontrol_point(
+                            timecontrol,
+                            context_menu_position
+                                .unwrap_or_else(|| viewport.screen_to_graph(handle_pos)),
+                        );
+                        changed = true;
+                        commit_requested = true;
+                        structure_changed = true;
+                        ui.close();
+                    }
+                    ui.separator();
+                    if Self::show_timecontrol_handle_menu(ui, timecontrol, selected_point) {
+                        changed = true;
+                        commit_requested = true;
+                    }
+                });
+                if structure_changed {
+                    return (changed, commit_requested, true);
+                }
+            }
+        }
+
+        (changed, commit_requested, false)
+    }
+
+    fn show_timecontrol_anchors(
+        ui: &mut egui::Ui,
+        painter: &egui::Painter,
+        timecontrol: &mut crate::keyframe::TimeControlBezier,
+        selected_point: &mut usize,
+        context_menu_position: &mut Option<[f64; 2]>,
+        viewport: TimeControlViewport,
+        vertical_scroll: &mut f64,
+    ) -> (bool, bool, bool) {
+        let mut changed = false;
+        let mut commit_requested = false;
+
+        for point_index in 0..timecontrol.points.len() {
+            let point = viewport.graph_to_screen(timecontrol.points[point_index].position);
+            let handle_rect = egui::Rect::from_center_size(point, egui::Vec2::splat(18.0));
+            let handle_response = ui.interact(
+                handle_rect,
+                ui.id().with(("timecontrol_anchor", point_index)),
+                egui::Sense::click_and_drag(),
+            );
+            if handle_response.clicked() || handle_response.dragged() {
+                *selected_point = point_index;
+            }
+            if handle_response.secondary_clicked() {
+                *selected_point = point_index;
+                *context_menu_position = handle_response
+                    .interact_pointer_pos()
+                    .map(|pos| viewport.screen_to_graph(pos));
+            }
+            if handle_response.dragged()
+                && let Some(pointer_pos) = handle_response.interact_pointer_pos()
+            {
+                let new_position = Self::timecontrol_drag_position(
+                    viewport.screen_to_graph(pointer_pos),
+                    Self::timecontrol_drag_modifiers(ui),
+                    None,
+                );
+                if Self::move_timecontrol_anchor(timecontrol, point_index, new_position) {
+                    changed = true;
+                    Self::keep_timecontrol_y_in_scroll_range(
+                        vertical_scroll,
+                        viewport,
+                        new_position[1],
+                    );
+                }
+            }
+            commit_requested |= handle_response.drag_stopped();
+            let color = if handle_response.hovered()
+                || handle_response.dragged()
+                || point_index == *selected_point
+            {
+                GUI_COLORS.anchor_select
+            } else {
+                GUI_COLORS.anchor
+            };
+            painter.rect_filled(
+                egui::Rect::from_center_size(point, egui::Vec2::splat(10.0)),
+                2.0,
+                color,
+            );
+            let before_len = timecontrol.points.len();
+            handle_response.context_menu(|ui| {
+                if Self::show_timecontrol_anchor_menu(
+                    ui,
+                    timecontrol,
+                    selected_point,
+                    context_menu_position.unwrap_or_else(|| viewport.screen_to_graph(point)),
+                ) {
+                    changed = true;
+                    commit_requested = true;
+                }
+            });
+            if timecontrol.points.len() != before_len {
+                return (changed, commit_requested, true);
+            }
+        }
+
+        (changed, commit_requested, false)
     }
 
     fn format_timecontrol_grid_label(value: f64) -> String {
@@ -714,6 +806,41 @@ impl KeyframesGui {
         ]
     }
 
+    fn timecontrol_drag_modifiers(ui: &egui::Ui) -> TimeControlDragModifiers {
+        ui.input(|input| TimeControlDragModifiers {
+            shift: input.modifiers.shift,
+            alt: input.modifiers.alt,
+        })
+    }
+
+    fn timecontrol_drag_position(
+        mut position: [f64; 2],
+        modifiers: TimeControlDragModifiers,
+        horizontal_snap_y: Option<f64>,
+    ) -> [f64; 2] {
+        if modifiers.alt {
+            position = Self::snap_timecontrol_position(position, 0.1);
+        }
+        if let Some(y) = horizontal_snap_y
+            && modifiers.shift
+        {
+            position[1] = y;
+        }
+        position
+    }
+
+    fn keep_timecontrol_y_in_scroll_range(
+        vertical_scroll: &mut f64,
+        viewport: TimeControlViewport,
+        y: f64,
+    ) {
+        if y < viewport.min_y {
+            *vertical_scroll = 0.0;
+        } else if y > viewport.max_y {
+            *vertical_scroll = 1.0;
+        }
+    }
+
     fn move_timecontrol_anchor(
         timecontrol: &mut crate::keyframe::TimeControlBezier,
         point_index: usize,
@@ -771,6 +898,28 @@ impl KeyframesGui {
         }
         Self::constrain_all_timecontrol_handles(timecontrol);
         true
+    }
+
+    fn set_timecontrol_handle(
+        timecontrol: &mut crate::keyframe::TimeControlBezier,
+        point_index: usize,
+        handle_kind: TimeControlHandleKind,
+        point: [f64; 2],
+    ) {
+        match handle_kind {
+            TimeControlHandleKind::In => {
+                timecontrol.points[point_index].in_handle = Some(point);
+                if !timecontrol.points[point_index].handles_separated {
+                    Self::mirror_timecontrol_handle(timecontrol, point_index, false);
+                }
+            }
+            TimeControlHandleKind::Out => {
+                timecontrol.points[point_index].out_handle = Some(point);
+                if !timecontrol.points[point_index].handles_separated {
+                    Self::mirror_timecontrol_handle(timecontrol, point_index, true);
+                }
+            }
+        }
     }
 
     fn constrain_all_timecontrol_handles(timecontrol: &mut crate::keyframe::TimeControlBezier) {
