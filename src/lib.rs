@@ -208,7 +208,7 @@ impl aviutl2::generic::GenericPlugin for KeyframesAux2 {
 
 impl Drop for KeyframesAux2 {
     fn drop(&mut self) {
-        // UninitializePlugin中にEDIT_HANDLEを使うと死ぬので、ここでフラグを立てておく
+        // UninitializePlugin中に別スレッドからEDIT_HANDLEを使うと死ぬので、ここでフラグを立てておく
         // もっともこれですべての処理を回避できるわけではない（タイミング的な問題）が、まぁある程度はマシになるはず...
         // 本来はAviUtl2はUninitializePluginを呼び終わるまでEDIT_HANDLEが有効であるべき
         SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::SeqCst);
