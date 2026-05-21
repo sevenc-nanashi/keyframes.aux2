@@ -30,3 +30,8 @@ build = ["aulua build", "cargo build --release"]
 [development]
 aviutl2_version = "latest"
 catalog_dependencies = ["KuroNeko.CopyAlias", "sigma-axis.Basic_S"]
+
+[release]
+package_template = "./release/package.txt"
+package_information = "{name} v{version} / 擬似的にキーフレーム的な動作を実現するためのプラグイン"
+prebuild = ["cargo about generate ./about.hbs -o ./release/package.txt"]
