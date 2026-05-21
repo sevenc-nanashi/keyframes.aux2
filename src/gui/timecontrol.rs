@@ -98,12 +98,81 @@ impl KeyframesGui {
             return;
         }
 
-        let (changed, commit_requested) = Self::show_timecontrol_bezier_editor(
-            ui,
-            &mut target.timecontrol,
-            &mut target.selected_point,
-            &mut target.context_menu_position,
+        target.vertical_zoom = target.vertical_zoom.clamp(0.25, 8.0);
+        target.vertical_scroll = target.vertical_scroll.clamp(0.0, 1.0);
+        let content_size = ui.available_size();
+        let total_width = content_size.x;
+        let content_height = content_size.y;
+        let separator_width = 8.0;
+        if !target.preset_panel_width.is_finite() {
+            target.preset_panel_width =
+                (total_width - content_height - separator_width).max(0.0);
+        }
+        target.preset_panel_width = target
+            .preset_panel_width
+            .clamp(0.0, (total_width - separator_width).max(0.0));
+        let preset_width = target.preset_panel_width;
+        let editor_width = (total_width - preset_width - separator_width).max(0.0);
+        let (content_rect, _) = ui.allocate_exact_size(content_size, egui::Sense::hover());
+        let editor_rect = egui::Rect::from_min_size(
+            content_rect.min,
+            egui::vec2(editor_width, content_height),
         );
+        let separator_rect = egui::Rect::from_min_size(
+            egui::pos2(editor_rect.right(), content_rect.top()),
+            egui::vec2(separator_width, content_height),
+        );
+        let preset_rect = egui::Rect::from_min_size(
+            egui::pos2(separator_rect.right(), content_rect.top()),
+            egui::vec2(preset_width, content_height),
+        );
+        let mut result = (false, false);
+
+        if editor_width > 1.0 {
+            let mut editor_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(editor_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            editor_ui.set_clip_rect(editor_rect);
+            result = Self::show_timecontrol_bezier_editor(
+                &mut editor_ui,
+                &mut target.timecontrol,
+                &mut target.selected_point,
+                &mut target.context_menu_position,
+                &mut target.vertical_zoom,
+                &mut target.vertical_scroll,
+            );
+        }
+
+        let separator_response = ui.interact(
+            separator_rect,
+            ui.id().with("timecontrol_editor_separator"),
+            egui::Sense::drag(),
+        );
+        if separator_response.hovered() || separator_response.dragged() {
+            ui.output_mut(|output| output.cursor_icon = egui::CursorIcon::ResizeHorizontal);
+        }
+        ui.painter().line_segment(
+            [separator_rect.center_top(), separator_rect.center_bottom()],
+            egui::Stroke::new(1.0, GUI_COLORS.grid_line),
+        );
+        if separator_response.dragged() {
+            target.preset_panel_width = (target.preset_panel_width
+                - separator_response.drag_delta().x)
+                .clamp(0.0, (total_width - separator_width).max(0.0));
+        }
+
+        if preset_width > 1.0 {
+            let mut preset_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(preset_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            preset_ui.set_clip_rect(preset_rect);
+            preset_ui.label("プリセット");
+        }
+        let (changed, commit_requested) = result;
         target.dirty |= changed;
 
         if commit_requested && target.dirty {
@@ -136,6 +205,8 @@ impl KeyframesGui {
         timecontrol: &mut crate::keyframe::TimeControlBezier,
         selected_point: &mut usize,
         context_menu_position: &mut Option<[f64; 2]>,
+        vertical_zoom: &mut f64,
+        vertical_scroll: &mut f64,
     ) -> (bool, bool) {
         let mut changed = false;
         let mut commit_requested = false;
@@ -143,11 +214,47 @@ impl KeyframesGui {
         *selected_point = (*selected_point).min(timecontrol.points.len().saturating_sub(1));
 
         let available_size = ui.available_size();
-        let size = available_size.x.min(available_size.y).max(220.0);
+        if available_size.x <= f32::EPSILON || available_size.y <= f32::EPSILON {
+            return (false, false);
+        }
         let (response, painter) =
-            ui.allocate_painter(egui::Vec2::splat(size), egui::Sense::click());
-        let rect = response.rect.shrink(size * 0.15);
-        let (min_y, max_y) = (0.0, 1.0);
+            ui.allocate_painter(available_size, egui::Sense::click_and_drag());
+        let rect = response.rect.shrink(response.rect.width().min(response.rect.height()) * 0.15);
+        let visible_y_range = 1.0 / (*vertical_zoom).clamp(0.25, 8.0);
+        let (content_min_y, content_max_y) = Self::timecontrol_vertical_bounds(timecontrol);
+        let content_y_range = content_max_y - content_min_y;
+        let (scroll_min_y, scroll_max_y) = if content_y_range >= visible_y_range {
+            (content_min_y, content_max_y - visible_y_range)
+        } else {
+            (content_max_y - visible_y_range, content_min_y)
+        };
+        let movable_y_range = scroll_max_y - scroll_min_y;
+        if response.hovered() {
+            let (scroll_delta, zoom_delta, ctrl) = ui.input(|i| {
+                (
+                    i.smooth_scroll_delta().y as f64,
+                    i.zoom_delta() as f64,
+                    i.modifiers.ctrl,
+                )
+            });
+            if ctrl {
+                if (zoom_delta - 1.0).abs() > f64::EPSILON {
+                    *vertical_zoom = (*vertical_zoom * zoom_delta).clamp(0.25, 8.0);
+                } else if scroll_delta.abs() > f64::EPSILON {
+                    *vertical_zoom =
+                        (*vertical_zoom * (scroll_delta * 0.01).exp()).clamp(0.25, 8.0);
+                }
+            } else if scroll_delta.abs() > f64::EPSILON && rect.height() > f32::EPSILON {
+                if movable_y_range > f64::EPSILON {
+                    let scroll_ratio =
+                        scroll_delta / rect.height() as f64 * visible_y_range / movable_y_range;
+                    *vertical_scroll = (*vertical_scroll - scroll_ratio).clamp(0.0, 1.0);
+                }
+            }
+        }
+        *vertical_scroll = (*vertical_scroll).clamp(0.0, 1.0);
+        let min_y = scroll_min_y + movable_y_range * *vertical_scroll;
+        let max_y = min_y + visible_y_range;
 
         let to_screen = |point: [f64; 2]| {
             egui::pos2(
@@ -177,34 +284,47 @@ impl KeyframesGui {
         });
 
         let grid_stroke = egui::Stroke::new(1.0, GUI_COLORS.grid_line);
-        let graph_rect = egui::Rect::from_min_max(to_screen([0.0, 1.0]), to_screen([1.0, 0.0]));
-        painter.rect_stroke(graph_rect, 0.0, grid_stroke, egui::StrokeKind::Inside);
+        let strong_grid_stroke =
+            egui::Stroke::new(1.5, GUI_COLORS.grid_line.linear_multiply(1.35));
+        let base_graph_rect = egui::Rect::from_min_max(to_screen([0.0, 1.0]), to_screen([1.0, 0.0]));
+        let horizontal_grid_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.top()),
+            egui::pos2(rect.right(), rect.bottom()),
+        );
         for i in 1..4 {
-            let t = i as f32 / 4.0;
+            let x = rect.left() + rect.width() * i as f32 / 4.0;
             painter.line_segment(
                 [
-                    egui::pos2(graph_rect.left() + graph_rect.width() * t, graph_rect.top()),
-                    egui::pos2(
-                        graph_rect.left() + graph_rect.width() * t,
-                        graph_rect.bottom(),
-                    ),
-                ],
-                grid_stroke,
-            );
-            painter.line_segment(
-                [
-                    egui::pos2(
-                        graph_rect.left(),
-                        graph_rect.top() + graph_rect.height() * t,
-                    ),
-                    egui::pos2(
-                        graph_rect.right(),
-                        graph_rect.top() + graph_rect.height() * t,
-                    ),
+                    egui::pos2(x, base_graph_rect.top()),
+                    egui::pos2(x, base_graph_rect.bottom()),
                 ],
                 grid_stroke,
             );
         }
+        let start_grid_y = (min_y * 4.0).floor() as i32;
+        let end_grid_y = (max_y * 4.0).ceil() as i32;
+        for i in start_grid_y..=end_grid_y {
+            let y = i as f64 / 4.0;
+            let stroke = if i == 0 || i == 4 {
+                strong_grid_stroke
+            } else {
+                grid_stroke
+            };
+            let y_pos = to_screen([0.0, y]).y;
+            painter.line_segment(
+                [
+                    egui::pos2(horizontal_grid_rect.left(), y_pos),
+                    egui::pos2(horizontal_grid_rect.right(), y_pos),
+                ],
+                stroke,
+            );
+        }
+        painter.rect_stroke(
+            base_graph_rect,
+            0.0,
+            strong_grid_stroke,
+            egui::StrokeKind::Inside,
+        );
 
         let curve_color = GUI_COLORS.zoom_gauge;
         let curve_stroke = egui::Stroke::new(2.0, curve_color);
@@ -385,6 +505,27 @@ impl KeyframesGui {
         }
 
         (changed, commit_requested)
+    }
+
+    fn timecontrol_vertical_bounds(
+        timecontrol: &crate::keyframe::TimeControlBezier,
+    ) -> (f64, f64) {
+        let mut min_y = 0.0_f64;
+        let mut max_y = 1.0_f64;
+        for point in &timecontrol.points {
+            for position in [
+                Some(point.position),
+                point.in_handle,
+                point.out_handle,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                min_y = min_y.min(position[1]);
+                max_y = max_y.max(position[1]);
+            }
+        }
+        (min_y, max_y)
     }
 
     fn show_timecontrol_anchor_menu(

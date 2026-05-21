@@ -22,6 +22,9 @@ pub(super) struct TimeControlEditorTarget {
     pub(super) timecontrol: crate::keyframe::TimeControlBezier,
     pub(super) selected_point: usize,
     pub(super) context_menu_position: Option<[f64; 2]>,
+    pub(super) vertical_zoom: f64,
+    pub(super) vertical_scroll: f64,
+    pub(super) preset_panel_width: f32,
     pub(super) dirty: bool,
 }
 
