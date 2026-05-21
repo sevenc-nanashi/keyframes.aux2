@@ -108,13 +108,14 @@ inner_obj.getpoint = function(...)
 end
 
 inner_G.require = function(name)
+  local loader_prefix
   if #script_dir > 0 then
-    package.path = script_dir .. "/?.lua;" .. script_dir .. "/?.dll;" .. package.path
+    loader_prefix = script_dir .. "/?.lua;" .. script_dir .. "/?.dll;"
+    package.path = loader_prefix .. package.path
   end
   local ok, result = pcall(require, name)
   if #script_dir > 0 then
-    package.path = string.gsub(package.path, script_dir .. "/%?%.lua;", "")
-    package.path = string.gsub(package.path, script_dir .. "/%?%.dll;", "")
+    package.path = package.path:sub(#loader_prefix + 1)
   end
   if not ok then
     error("Failed to require module '" .. name .. "': " .. tostring(result))
