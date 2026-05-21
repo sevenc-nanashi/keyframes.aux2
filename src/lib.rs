@@ -3,8 +3,8 @@ use std::str::FromStr;
 use anyhow::Context;
 use aviutl2_eframe::egui::TextBuffer;
 
-mod keyframe;
 mod gui;
+mod keyframe;
 mod module;
 
 #[aviutl2::plugin(GenericPlugin)]

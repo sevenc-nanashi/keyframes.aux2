@@ -32,9 +32,12 @@ impl KeyframesMod2 {
             bank_id: bank_id as _,
             keyframes_id: track_id as _,
         };
-        let keyframes = crate::KEYFRAMES
-            .get(&param)
-            .with_context(|| format!("keyframes not found for bank_id: {}, track_id: {}", bank_id, track_id))?;
+        let keyframes = crate::KEYFRAMES.get(&param).with_context(|| {
+            format!(
+                "keyframes not found for bank_id: {}, track_id: {}",
+                bank_id, track_id
+            )
+        })?;
         let (index, keyframe) = keyframes
             .keyframes
             .iter()

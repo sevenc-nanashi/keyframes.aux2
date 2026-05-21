@@ -186,7 +186,8 @@ impl KeyframesGui {
         let mut kf_info = initial_kf_info;
 
         for section in sections {
-            if let crate::keyframe::Keyframe::Easing(ref new_kf_info) = keyframes.keyframes[section.0]
+            if let crate::keyframe::Keyframe::Easing(ref new_kf_info) =
+                keyframes.keyframes[section.0]
             {
                 kf_info = new_kf_info;
             }
@@ -597,7 +598,8 @@ impl KeyframesGui {
         let mut current_acceleration = current_keyframe.acceleration;
         if ui.checkbox(&mut current_acceleration, "加速").changed() {
             let mut new_keyframes = keyframes.clone();
-            let crate::keyframe::Keyframe::Easing(ref mut k) = new_keyframes.keyframes[keyframe_index]
+            let crate::keyframe::Keyframe::Easing(ref mut k) =
+                new_keyframes.keyframes[keyframe_index]
             else {
                 unreachable!();
             };
@@ -608,7 +610,8 @@ impl KeyframesGui {
         let mut current_deceleration = current_keyframe.deceleration;
         if ui.checkbox(&mut current_deceleration, "減速").changed() {
             let mut new_keyframes = keyframes.clone();
-            let crate::keyframe::Keyframe::Easing(ref mut k) = new_keyframes.keyframes[keyframe_index]
+            let crate::keyframe::Keyframe::Easing(ref mut k) =
+                new_keyframes.keyframes[keyframe_index]
             else {
                 unreachable!();
             };

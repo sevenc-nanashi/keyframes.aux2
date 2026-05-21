@@ -14,17 +14,18 @@ build = "aulua build"
 destination = "Script/@embedded.tra2"
 source = "build/@embedded.tra2"
 build = "aulua build"
+profiles.release.enabled = false
 
 [artifacts.keyframes-aux2]
 destination = "Plugin/keyframes.aux2"
 
 [artifacts.keyframes-aux2.profiles.debug]
 source = "target/debug/keyframes_aux2.dll"
-build = "cargo build"
+build = ["aulua build", "cargo build"]
 
 [artifacts.keyframes-aux2.profiles.release]
 source = "target/release/keyframes_aux2.dll"
-build = "cargo build --release"
+build = ["aulua build", "cargo build --release"]
 
 [development]
 aviutl2_version = "latest"

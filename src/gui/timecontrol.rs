@@ -105,8 +105,7 @@ impl KeyframesGui {
         let content_height = content_size.y;
         let separator_width = 8.0;
         if !target.preset_panel_width.is_finite() {
-            target.preset_panel_width =
-                (total_width - content_height - separator_width).max(0.0);
+            target.preset_panel_width = (total_width - content_height - separator_width).max(0.0);
         }
         target.preset_panel_width = target
             .preset_panel_width
@@ -114,10 +113,8 @@ impl KeyframesGui {
         let preset_width = target.preset_panel_width;
         let editor_width = (total_width - preset_width - separator_width).max(0.0);
         let (content_rect, _) = ui.allocate_exact_size(content_size, egui::Sense::hover());
-        let editor_rect = egui::Rect::from_min_size(
-            content_rect.min,
-            egui::vec2(editor_width, content_height),
-        );
+        let editor_rect =
+            egui::Rect::from_min_size(content_rect.min, egui::vec2(editor_width, content_height));
         let separator_rect = egui::Rect::from_min_size(
             egui::pos2(editor_rect.right(), content_rect.top()),
             egui::vec2(separator_width, content_height),
@@ -219,7 +216,9 @@ impl KeyframesGui {
         }
         let (response, painter) =
             ui.allocate_painter(available_size, egui::Sense::click_and_drag());
-        let rect = response.rect.shrink(response.rect.width().min(response.rect.height()) * 0.15);
+        let rect = response
+            .rect
+            .shrink(response.rect.width().min(response.rect.height()) * 0.15);
         let visible_y_range = 1.0 / (*vertical_zoom).clamp(0.25, 8.0);
         let (content_min_y, content_max_y) = Self::timecontrol_vertical_bounds(timecontrol);
         let content_y_range = content_max_y - content_min_y;
@@ -248,13 +247,20 @@ impl KeyframesGui {
                 if movable_y_range > f64::EPSILON {
                     let scroll_ratio =
                         scroll_delta / rect.height() as f64 * visible_y_range / movable_y_range;
-                    *vertical_scroll = (*vertical_scroll - scroll_ratio).clamp(0.0, 1.0);
+                    *vertical_scroll = (*vertical_scroll + scroll_ratio).clamp(0.0, 1.0);
                 }
             }
         }
         *vertical_scroll = (*vertical_scroll).clamp(0.0, 1.0);
         let min_y = scroll_min_y + movable_y_range * *vertical_scroll;
         let max_y = min_y + visible_y_range;
+        let keep_y_in_scroll_range = |vertical_scroll: &mut f64, y: f64| {
+            if y < min_y {
+                *vertical_scroll = 0.0;
+            } else if y > max_y {
+                *vertical_scroll = 1.0;
+            }
+        };
 
         let to_screen = |point: [f64; 2]| {
             egui::pos2(
@@ -284,9 +290,9 @@ impl KeyframesGui {
         });
 
         let grid_stroke = egui::Stroke::new(1.0, GUI_COLORS.grid_line);
-        let strong_grid_stroke =
-            egui::Stroke::new(1.5, GUI_COLORS.grid_line.linear_multiply(1.35));
-        let base_graph_rect = egui::Rect::from_min_max(to_screen([0.0, 1.0]), to_screen([1.0, 0.0]));
+        let strong_grid_stroke = egui::Stroke::new(1.5, GUI_COLORS.grid_line.linear_multiply(1.35));
+        let base_graph_rect =
+            egui::Rect::from_min_max(to_screen([0.0, 1.0]), to_screen([1.0, 0.0]));
         let horizontal_grid_rect = egui::Rect::from_min_max(
             egui::pos2(rect.left(), rect.top()),
             egui::pos2(rect.right(), rect.bottom()),
@@ -295,14 +301,15 @@ impl KeyframesGui {
             let x = rect.left() + rect.width() * i as f32 / 4.0;
             painter.line_segment(
                 [
-                    egui::pos2(x, base_graph_rect.top()),
-                    egui::pos2(x, base_graph_rect.bottom()),
+                    egui::pos2(x, response.rect.top()),
+                    egui::pos2(x, response.rect.bottom()),
                 ],
                 grid_stroke,
             );
         }
         let start_grid_y = (min_y * 4.0).floor() as i32;
         let end_grid_y = (max_y * 4.0).ceil() as i32;
+        let grid_label_font = egui::FontId::proportional(11.0);
         for i in start_grid_y..=end_grid_y {
             let y = i as f64 / 4.0;
             let stroke = if i == 0 || i == 4 {
@@ -318,7 +325,28 @@ impl KeyframesGui {
                 ],
                 stroke,
             );
+            painter.text(
+                egui::pos2(horizontal_grid_rect.left() - 6.0, y_pos),
+                egui::Align2::RIGHT_CENTER,
+                Self::format_timecontrol_grid_label(y),
+                grid_label_font.clone(),
+                GUI_COLORS.text,
+            );
         }
+        painter.line_segment(
+            [
+                egui::pos2(horizontal_grid_rect.left(), response.rect.top()),
+                egui::pos2(horizontal_grid_rect.left(), response.rect.bottom()),
+            ],
+            strong_grid_stroke,
+        );
+        painter.line_segment(
+            [
+                egui::pos2(horizontal_grid_rect.right(), response.rect.top()),
+                egui::pos2(horizontal_grid_rect.right(), response.rect.bottom()),
+            ],
+            strong_grid_stroke,
+        );
         painter.rect_stroke(
             base_graph_rect,
             0.0,
@@ -419,6 +447,7 @@ impl KeyframesGui {
                             }
                         }
                         changed = true;
+                        keep_y_in_scroll_range(vertical_scroll, new_point[1]);
                     }
                 }
                 commit_requested |= handle_response.drag_stopped();
@@ -468,9 +497,12 @@ impl KeyframesGui {
             }
             if handle_response.dragged()
                 && let Some(pointer_pos) = handle_response.interact_pointer_pos()
-                && Self::move_timecontrol_anchor(timecontrol, point_index, from_screen(pointer_pos))
             {
-                changed = true;
+                let new_position = from_screen(pointer_pos);
+                if Self::move_timecontrol_anchor(timecontrol, point_index, new_position) {
+                    changed = true;
+                    keep_y_in_scroll_range(vertical_scroll, new_position[1]);
+                }
             }
             commit_requested |= handle_response.drag_stopped();
             let color = if handle_response.hovered()
@@ -507,25 +539,29 @@ impl KeyframesGui {
         (changed, commit_requested)
     }
 
-    fn timecontrol_vertical_bounds(
-        timecontrol: &crate::keyframe::TimeControlBezier,
-    ) -> (f64, f64) {
+    fn timecontrol_vertical_bounds(timecontrol: &crate::keyframe::TimeControlBezier) -> (f64, f64) {
         let mut min_y = 0.0_f64;
         let mut max_y = 1.0_f64;
         for point in &timecontrol.points {
-            for position in [
-                Some(point.position),
-                point.in_handle,
-                point.out_handle,
-            ]
-            .into_iter()
-            .flatten()
+            for position in [Some(point.position), point.in_handle, point.out_handle]
+                .into_iter()
+                .flatten()
             {
                 min_y = min_y.min(position[1]);
                 max_y = max_y.max(position[1]);
             }
         }
         (min_y, max_y)
+    }
+
+    fn format_timecontrol_grid_label(value: f64) -> String {
+        if value.abs() < 0.000_001 {
+            "0".to_string()
+        } else if (value - value.round()).abs() < 0.000_001 {
+            format!("{value:.0}")
+        } else {
+            format!("{value:.2}")
+        }
     }
 
     fn show_timecontrol_anchor_menu(
