@@ -499,31 +499,27 @@ impl KeyframesGui {
         };
         let current_easing = easings.get(&current_keyframe.easing);
 
-        // TODO: ちゃんとlabelごとに階層にする
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            let all_height = ui.available_height();
-            Self::show_midpoint_actions(ui, keyframes, index, current_level, &mut update_keyframe);
-            if let Some(current_easing) = current_easing {
-                self.show_current_easing_options(
-                    ui,
-                    keyframes,
-                    params,
-                    object,
-                    effect,
-                    track,
-                    keyframe_index,
-                    current_keyframe,
-                    current_easing,
-                    index,
-                    current_level,
-                    &mut update_keyframe,
-                );
-            }
-            let available_height = ui.available_height();
-            ui.menu_button("移動方法", |ui| {
-                egui::containers::ScrollArea::vertical().show(ui, |ui| {
-                    Self::show_easing_choices(ui, keyframes, index, easings, &mut update_keyframe);
-                });
+        Self::show_midpoint_actions(ui, keyframes, index, current_level, &mut update_keyframe);
+        if let Some(current_easing) = current_easing {
+            self.show_current_easing_options(
+                ui,
+                keyframes,
+                params,
+                object,
+                effect,
+                track,
+                keyframe_index,
+                current_keyframe,
+                current_easing,
+                index,
+                current_level,
+                &mut update_keyframe,
+            );
+        }
+        ui.menu_button("移動方法", |ui| {
+            // TODO: ちゃんとlabelごとに階層にする
+            egui::containers::ScrollArea::vertical().show(ui, |ui| {
+                Self::show_easing_choices(ui, keyframes, index, easings, &mut update_keyframe);
             });
         });
     }
