@@ -44,6 +44,10 @@ jobs:
           cargo set-version "${{ github.event.inputs.version }}"
           cargo update --workspace
 
+      - name: Build package
+        run: |
+          au2 release
+
       - name: Commit version change
         run: |
           git config --local user.name "GitHub Actions"
