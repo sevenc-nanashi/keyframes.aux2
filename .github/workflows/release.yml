@@ -46,7 +46,7 @@ jobs:
 
       - name: Build package
         run: |
-          au2 release
+          mise exec "--" au2 release
 
       - name: Commit version change
         run: |
