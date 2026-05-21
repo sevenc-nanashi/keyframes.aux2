@@ -245,7 +245,7 @@ impl KeyframesGui {
     ) -> (bool, bool) {
         let mut changed = false;
         let mut commit_requested = false;
-        if let crate::keyframe::TimeControl::Bezier(bezier) = timecontrol {
+        if let crate::keyframe::TimeControlCurve::Bezier(bezier) = &timecontrol.curve {
             *selected_point = (*selected_point).min(bezier.points.len().saturating_sub(1));
         } else {
             *selected_point = 0;
@@ -308,7 +308,11 @@ impl KeyframesGui {
                 changed = true;
                 commit_requested = true;
             }
-            if let crate::keyframe::TimeControl::Bezier(bezier) = timecontrol
+            if Self::show_timecontrol_modifier_menu(ui, timecontrol) {
+                changed = true;
+                commit_requested = true;
+            }
+            if let crate::keyframe::TimeControlCurve::Bezier(bezier) = &mut timecontrol.curve
                 && ui.button("中継点追加").clicked()
             {
                 *selected_point = Self::insert_timecontrol_point(
@@ -322,8 +326,9 @@ impl KeyframesGui {
         });
 
         Self::draw_timecontrol_grid(&painter, response.rect, viewport);
-        Self::draw_timecontrol_curve(&painter, timecontrol, viewport);
-        if let crate::keyframe::TimeControl::Bezier(bezier) = timecontrol {
+        Self::draw_timecontrol_curve(&painter, timecontrol, viewport, false);
+        Self::draw_timecontrol_modifier_label(&painter, timecontrol, viewport);
+        if let crate::keyframe::TimeControlCurve::Bezier(bezier) = &mut timecontrol.curve {
             Self::draw_timecontrol_control_lines(&painter, bezier, viewport);
 
             let (handle_changed, handle_commit_requested, structure_changed) =
@@ -359,7 +364,7 @@ impl KeyframesGui {
             if structure_changed {
                 return (changed, commit_requested);
             }
-        } else if let crate::keyframe::TimeControl::Elastic(_) = timecontrol {
+        } else if let crate::keyframe::TimeControlCurve::Elastic(_) = &timecontrol.curve {
             let (elastic_changed, elastic_commit_requested) =
                 Self::show_timecontrol_elastic_handles(
                     ui,
@@ -390,7 +395,7 @@ impl KeyframesGui {
     fn timecontrol_vertical_bounds(timecontrol: &crate::keyframe::TimeControl) -> (f64, f64) {
         let mut min_y = 0.0_f64;
         let mut max_y = 1.0_f64;
-        if let crate::keyframe::TimeControl::Bezier(bezier) = timecontrol {
+        if let crate::keyframe::TimeControlCurve::Bezier(bezier) = &timecontrol.curve {
             for point in &bezier.points {
                 for position in [Some(point.position), point.in_handle, point.out_handle]
                     .into_iter()
@@ -400,15 +405,21 @@ impl KeyframesGui {
                     max_y = max_y.max(position[1]);
                 }
             }
-        } else if matches!(timecontrol, crate::keyframe::TimeControl::Elastic(_)) {
+        } else if matches!(
+            timecontrol.curve,
+            crate::keyframe::TimeControlCurve::Elastic(_)
+        ) {
             min_y = 0.0;
             max_y = 2.0;
-        } else if matches!(timecontrol, crate::keyframe::TimeControl::Bounce(_)) {
+        } else if matches!(
+            timecontrol.curve,
+            crate::keyframe::TimeControlCurve::Bounce(_)
+        ) {
             min_y = 0.0;
             max_y = 1.0;
         } else {
             for position in timecontrol
-                .sampled_points(96)
+                .curve_sampled_points(96)
                 .into_iter()
                 .chain(timecontrol.editable_vertex())
             {
@@ -490,22 +501,13 @@ impl KeyframesGui {
         painter: &egui::Painter,
         timecontrol: &crate::keyframe::TimeControl,
         viewport: TimeControlViewport,
+        apply_modifier: bool,
     ) {
         let curve_stroke = egui::Stroke::new(2.0, GUI_COLORS.zoom_gauge);
-        let points = if let crate::keyframe::TimeControl::Bezier(bezier) = timecontrol {
-            let mut points = Vec::new();
-            for segment_index in 0..bezier.points.len().saturating_sub(1) {
-                if points.is_empty() {
-                    points.push(bezier.points[segment_index].position);
-                }
-                for i in 1..=24 {
-                    let t = i as f64 / 24.0;
-                    points.push(bezier.segment_point_at(segment_index, t));
-                }
-            }
-            points
-        } else {
+        let points = if apply_modifier {
             timecontrol.sampled_points(96)
+        } else {
+            timecontrol.curve_sampled_points(96)
         };
         for points in points.windows(2) {
             painter.line_segment(
@@ -551,7 +553,7 @@ impl KeyframesGui {
             .show(ui, |ui| {
                 let available_width = ui.available_width();
                 let spacing = 8.0;
-                let target_width = 240.0;
+                let target_width = 200.0;
                 let columns = ((available_width + spacing) / (target_width + spacing))
                     .floor()
                     .max(1.0);
@@ -579,22 +581,38 @@ impl KeyframesGui {
 
                             let text_rect = egui::Rect::from_min_max(
                                 rect.left_top() + egui::vec2(6.0, 4.0),
-                                egui::pos2(rect.left() + 104.0, rect.bottom() - 4.0),
+                                egui::pos2(rect.left() + target_width / 3.0, rect.bottom() - 4.0),
                             );
-                            ui.painter().text(
-                                text_rect.left_top(),
-                                egui::Align2::LEFT_TOP,
-                                preset.name,
+                            let layout = egui::text::LayoutJob::simple(
+                                preset.name.to_string(),
                                 egui::FontId::proportional(13.0),
                                 GUI_COLORS.text,
+                                text_rect.width(),
                             );
-                            ui.painter().text(
-                                text_rect.left_bottom(),
-                                egui::Align2::LEFT_BOTTOM,
-                                preset.category,
-                                egui::FontId::proportional(11.0),
-                                GUI_COLORS.text.linear_multiply(0.75),
+                            let galley = ui.painter().layout_job(layout);
+                            ui.painter().galley(
+                                text_rect
+                                    .left_center()
+                                    .tap_mut(|pos| pos.y -= galley.size().y / 2.0),
+                                galley,
+                                GUI_COLORS.text,
                             );
+                            //
+                            // ui.painter().text(
+                            //     text_rect.left_top(),
+                            //     egui::Align2::LEFT_TOP,
+                            //     preset.name,
+                            //     egui::FontId::proportional(13.0),
+                            //     GUI_COLORS.text,
+                            // );
+                            // TODO: 作者とか出したいかも
+                            // ui.painter().text(
+                            //     text_rect.left_bottom(),
+                            //     egui::Align2::LEFT_BOTTOM,
+                            //     preset.category,
+                            //     egui::FontId::proportional(11.0),
+                            //     GUI_COLORS.text.linear_multiply(0.75),
+                            // );
 
                             let preview_rect = egui::Rect::from_min_max(
                                 egui::pos2(text_rect.right() + 6.0, rect.top() + 6.0),
@@ -647,7 +665,22 @@ impl KeyframesGui {
                 );
             }
         }
-        Self::draw_timecontrol_curve(painter, timecontrol, viewport);
+        Self::draw_timecontrol_curve(painter, timecontrol, viewport, true);
+    }
+
+    fn draw_timecontrol_modifier_label(
+        painter: &egui::Painter,
+        timecontrol: &crate::keyframe::TimeControl,
+        viewport: TimeControlViewport,
+    ) {
+        let pos = viewport.graph_to_screen([1.0, 0.0]) + egui::vec2(-6.0, -6.0);
+        painter.text(
+            pos,
+            egui::Align2::RIGHT_BOTTOM,
+            timecontrol.modifier.label(),
+            egui::FontId::proportional(12.0),
+            GUI_COLORS.text.linear_multiply(0.45),
+        );
     }
 
     fn show_timecontrol_handles(
@@ -910,6 +943,33 @@ impl KeyframesGui {
         changed
     }
 
+    fn show_timecontrol_modifier_menu(
+        ui: &mut egui::Ui,
+        timecontrol: &mut crate::keyframe::TimeControl,
+    ) -> bool {
+        let mut changed = false;
+        ui.menu_button("加工", |ui| {
+            for modifier in [
+                crate::keyframe::TimeControlModifier::Normal,
+                crate::keyframe::TimeControlModifier::Reverse,
+                crate::keyframe::TimeControlModifier::NormalReverse,
+                crate::keyframe::TimeControlModifier::ReverseNormal,
+            ] {
+                if ui
+                    .selectable_label(timecontrol.modifier == modifier, modifier.label())
+                    .clicked()
+                {
+                    if timecontrol.modifier != modifier {
+                        timecontrol.modifier = modifier;
+                        changed = true;
+                    }
+                    ui.close();
+                }
+            }
+        });
+        changed
+    }
+
     fn show_timecontrol_vertex(
         ui: &mut egui::Ui,
         painter: &egui::Painter,
@@ -974,7 +1034,7 @@ impl KeyframesGui {
         vertical_scroll: &mut f64,
         movable_y_range: f64,
     ) -> (bool, bool) {
-        let crate::keyframe::TimeControl::Elastic(elastic) = timecontrol else {
+        let crate::keyframe::TimeControlCurve::Elastic(elastic) = &mut timecontrol.curve else {
             return (false, false);
         };
 

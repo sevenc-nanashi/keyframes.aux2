@@ -86,10 +86,26 @@ pub enum TimeControlMode {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum TimeControl {
+pub struct TimeControl {
+    pub curve: TimeControlCurve,
+    #[serde(default)]
+    pub modifier: TimeControlModifier,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum TimeControlCurve {
     Bezier(TimeControlBezier),
     Elastic(TimeControlElastic),
     Bounce(TimeControlBounce),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+pub enum TimeControlModifier {
+    #[default]
+    Normal,
+    Reverse,
+    NormalReverse,
+    ReverseNormal,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -113,20 +129,30 @@ pub struct TimeControlElastic {
     pub frequency: f64,
     #[serde(default = "TimeControlElastic::default_decay")]
     pub decay: f64,
-    #[serde(default)]
-    pub reversed: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TimeControlBounce {
     pub vertex: [f64; 2],
-    #[serde(default)]
-    pub reversed: bool,
 }
 
 impl Default for TimeControl {
     fn default() -> Self {
-        Self::Bezier(TimeControlBezier::default())
+        Self {
+            curve: TimeControlCurve::Bezier(TimeControlBezier::default()),
+            modifier: TimeControlModifier::default(),
+        }
+    }
+}
+
+impl TimeControlModifier {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "通常",
+            Self::Reverse => "反転",
+            Self::NormalReverse => "通常→反転",
+            Self::ReverseNormal => "反転→通常",
+        }
     }
 }
 
@@ -136,7 +162,6 @@ impl Default for TimeControlElastic {
             amplitude: Self::default_amplitude(),
             frequency: Self::default_frequency(),
             decay: Self::default_decay(),
-            reversed: false,
         }
     }
 }
@@ -145,7 +170,6 @@ impl Default for TimeControlBounce {
     fn default() -> Self {
         Self {
             vertex: [0.55, 0.75],
-            reversed: false,
         }
     }
 }
@@ -173,26 +197,77 @@ impl Default for TimeControlBezier {
 
 impl TimeControl {
     pub fn default_for_mode(mode: TimeControlMode) -> Self {
-        match mode {
-            TimeControlMode::Bezier => Self::Bezier(TimeControlBezier::default()),
-            TimeControlMode::Elastic => Self::Elastic(TimeControlElastic::default()),
-            TimeControlMode::Bounce => Self::Bounce(TimeControlBounce::default()),
+        Self {
+            curve: match mode {
+                TimeControlMode::Bezier => TimeControlCurve::Bezier(TimeControlBezier::default()),
+                TimeControlMode::Elastic => {
+                    TimeControlCurve::Elastic(TimeControlElastic::default())
+                }
+                TimeControlMode::Bounce => TimeControlCurve::Bounce(TimeControlBounce::default()),
+            },
+            modifier: TimeControlModifier::default(),
         }
     }
 
     pub fn mode(&self) -> TimeControlMode {
-        match self {
-            Self::Bezier(_) => TimeControlMode::Bezier,
-            Self::Elastic(_) => TimeControlMode::Elastic,
-            Self::Bounce(_) => TimeControlMode::Bounce,
+        match self.curve {
+            TimeControlCurve::Bezier(_) => TimeControlMode::Bezier,
+            TimeControlCurve::Elastic(_) => TimeControlMode::Elastic,
+            TimeControlCurve::Bounce(_) => TimeControlMode::Bounce,
         }
     }
 
     pub fn y_at_x(&self, x: f64) -> f64 {
-        match self {
-            Self::Bezier(bezier) => bezier.y_at_x(x),
-            Self::Elastic(elastic) => elastic.y_at_x(x),
-            Self::Bounce(bounce) => bounce.y_at_x(x),
+        let x = x.clamp(0.0, 1.0);
+        match self.modifier {
+            TimeControlModifier::Normal => self.curve_y_at_x(x),
+            TimeControlModifier::Reverse => 1.0 - self.curve_y_at_x(1.0 - x),
+            TimeControlModifier::NormalReverse => {
+                if x < 0.5 {
+                    self.curve_y_at_x(x * 2.0) / 2.0
+                } else {
+                    1.0 - self.curve_y_at_x((1.0 - x) * 2.0) / 2.0
+                }
+            }
+            TimeControlModifier::ReverseNormal => {
+                if x < 0.5 {
+                    (1.0 - self.curve_y_at_x(1.0 - x * 2.0)) / 2.0
+                } else {
+                    0.5 + self.curve_y_at_x(x * 2.0 - 1.0) / 2.0
+                }
+            }
+        }
+    }
+
+    pub fn curve_y_at_x(&self, x: f64) -> f64 {
+        match &self.curve {
+            TimeControlCurve::Bezier(bezier) => bezier.y_at_x(x),
+            TimeControlCurve::Elastic(elastic) => elastic.y_at_x(x),
+            TimeControlCurve::Bounce(bounce) => bounce.y_at_x(x),
+        }
+    }
+
+    pub fn curve_sampled_points(&self, steps: usize) -> Vec<[f64; 2]> {
+        let steps = steps.max(1);
+        if let TimeControlCurve::Bezier(bezier) = &self.curve {
+            let mut points = Vec::new();
+            for segment_index in 0..bezier.points.len().saturating_sub(1) {
+                if points.is_empty() {
+                    points.push(bezier.points[segment_index].position);
+                }
+                for i in 1..=steps {
+                    let t = i as f64 / steps as f64;
+                    points.push(bezier.segment_point_at(segment_index, t));
+                }
+            }
+            points
+        } else {
+            (0..=steps)
+                .map(|i| {
+                    let x = i as f64 / steps as f64;
+                    [x, self.curve_y_at_x(x)]
+                })
+                .collect()
         }
     }
 
@@ -216,18 +291,18 @@ impl TimeControl {
     }
 
     pub fn editable_vertex(&self) -> Option<[f64; 2]> {
-        match self {
-            Self::Bezier(_) => None,
-            Self::Elastic(_) => None,
-            Self::Bounce(bounce) => Some(bounce.vertex),
+        match &self.curve {
+            TimeControlCurve::Bezier(_) => None,
+            TimeControlCurve::Elastic(_) => None,
+            TimeControlCurve::Bounce(bounce) => Some(bounce.vertex),
         }
     }
 
     pub fn set_editable_vertex(&mut self, vertex: [f64; 2]) {
-        match self {
-            Self::Bezier(_) => {}
-            Self::Elastic(_) => {}
-            Self::Bounce(bounce) => {
+        match &mut self.curve {
+            TimeControlCurve::Bezier(_) => {}
+            TimeControlCurve::Elastic(_) => {}
+            TimeControlCurve::Bounce(bounce) => {
                 bounce.vertex = [vertex[0].clamp(0.001, 0.999), vertex[1].clamp(0.0, 1.0)];
             }
         }
@@ -397,13 +472,6 @@ impl TimeControlElastic {
     fn y_at_x(&self, x: f64) -> f64 {
         // https://github.com/mimaraka/aviutl-plugin-curve_editor/blob/main/curve_editor/curve_elastic.cpp
         let progress = x.clamp(0.0, 1.0);
-        if self.reversed {
-            return 1.0 - self.y_at_x_unreversed(1.0 - progress);
-        }
-        self.y_at_x_unreversed(progress)
-    }
-
-    fn y_at_x_unreversed(&self, progress: f64) -> f64 {
         let amplitude = self.amplitude.clamp(0.0, 1.0);
         let frequency = self.frequency.max(0.5);
         let decay = self.decay.max(1.0);
@@ -464,13 +532,6 @@ impl TimeControlBounce {
     fn y_at_x(&self, x: f64) -> f64 {
         // https://github.com/mimaraka/aviutl-plugin-curve_editor/blob/main/curve_editor/curve_bounce.cpp
         let progress = x.clamp(0.0, 1.0);
-        if self.reversed {
-            return 1.0 - self.y_at_x_unreversed(1.0 - progress);
-        }
-        self.y_at_x_unreversed(progress)
-    }
-
-    fn y_at_x_unreversed(&self, progress: f64) -> f64 {
         let handle_x = self.vertex[0].clamp(0.001, 0.999);
         let handle_y = self.vertex[1].clamp(0.001, 1.0);
         let cor = (1.0 - handle_y).sqrt().clamp(0.001, 0.999);
@@ -503,53 +564,221 @@ impl TimeControlBounce {
 #[derive(Debug, Clone)]
 pub struct TimeControlPreset {
     pub name: &'static str,
-    pub category: &'static str,
     pub timecontrol: TimeControl,
 }
 
 pub fn timecontrol_presets() -> Vec<TimeControlPreset> {
     fn bezier(
         name: &'static str,
-        category: &'static str,
+        modifier: TimeControlModifier,
         cubic_bezier: [f64; 4],
     ) -> TimeControlPreset {
         TimeControlPreset {
             name,
-            category,
-            timecontrol: TimeControl::Bezier(TimeControlBezier::from_cubic_bezier(
-                cubic_bezier[0],
-                cubic_bezier[1],
-                cubic_bezier[2],
-                cubic_bezier[3],
-            )),
+            timecontrol: TimeControl {
+                curve: TimeControlCurve::Bezier(TimeControlBezier::from_cubic_bezier(
+                    cubic_bezier[0],
+                    cubic_bezier[1],
+                    cubic_bezier[2],
+                    cubic_bezier[3],
+                )),
+                modifier,
+            },
         }
     }
-    fn elastic(name: &'static str) -> TimeControlPreset {
+    fn elastic(name: &'static str, modifier: TimeControlModifier) -> TimeControlPreset {
         TimeControlPreset {
             name,
-            category: "Elastic",
-            timecontrol: TimeControl::Elastic(TimeControlElastic::default()),
+            timecontrol: TimeControl {
+                curve: TimeControlCurve::Elastic(TimeControlElastic::default()),
+                modifier,
+            },
         }
     }
-    fn bounce(name: &'static str) -> TimeControlPreset {
+    fn bounce(name: &'static str, modifier: TimeControlModifier) -> TimeControlPreset {
         TimeControlPreset {
             name,
-            category: "Bounce",
-            timecontrol: TimeControl::Bounce(TimeControlBounce::default()),
+            timecontrol: TimeControl {
+                curve: TimeControlCurve::Bounce(TimeControlBounce::default()),
+                modifier,
+            },
         }
     }
 
     vec![
-        bezier("easeInSine", "Sine", [0.12, 0.0, 0.39, 0.0]),
-        bezier("easeInQuad", "Quad", [0.11, 0.0, 0.5, 0.0]),
-        bezier("easeInCubic", "Cubic", [0.32, 0.0, 0.67, 0.0]),
-        bezier("easeInQuart", "Quart", [0.5, 0.0, 0.75, 0.0]),
-        bezier("easeInQuint", "Quint", [0.64, 0.0, 0.78, 0.0]),
-        bezier("easeInExpo", "Expo", [0.7, 0.0, 0.84, 0.0]),
-        bezier("easeInCirc", "Circ", [0.55, 0.0, 1.0, 0.45]),
-        bezier("easeInBack", "Back", [0.36, 0.0, 0.66, -0.56]),
-        elastic("easeOutElastic"),
-        bounce("easeOutBounce"),
+        bezier(
+            "[1] linear",
+            TimeControlModifier::Normal,
+            [0.25, 0.25, 0.75, 0.75],
+        ),
+        bezier(
+            "[2] easeInSine",
+            TimeControlModifier::Normal,
+            [0.12, 0.0, 0.39, 0.0],
+        ),
+        bezier(
+            "[3] easeOutSine",
+            TimeControlModifier::Reverse,
+            [0.12, 0.0, 0.39, 0.0],
+        ),
+        bezier(
+            "[4] easeInOutSine",
+            TimeControlModifier::NormalReverse,
+            [0.12, 0.0, 0.39, 0.0],
+        ),
+        bezier(
+            "[5] easeOutInSine",
+            TimeControlModifier::ReverseNormal,
+            [0.12, 0.0, 0.39, 0.0],
+        ),
+        bezier(
+            "[6] easeInQuad",
+            TimeControlModifier::Normal,
+            [0.11, 0.0, 0.5, 0.0],
+        ),
+        bezier(
+            "[7] easeOutQuad",
+            TimeControlModifier::Reverse,
+            [0.11, 0.0, 0.5, 0.0],
+        ),
+        bezier(
+            "[8] easeInOutQuad",
+            TimeControlModifier::NormalReverse,
+            [0.11, 0.0, 0.5, 0.0],
+        ),
+        bezier(
+            "[9] easeOutInQuad",
+            TimeControlModifier::ReverseNormal,
+            [0.11, 0.0, 0.5, 0.0],
+        ),
+        bezier(
+            "[10] easeInCubic",
+            TimeControlModifier::Normal,
+            [0.32, 0.0, 0.67, 0.0],
+        ),
+        bezier(
+            "[11] easeOutCubic",
+            TimeControlModifier::Reverse,
+            [0.32, 0.0, 0.67, 0.0],
+        ),
+        bezier(
+            "[12] easeInOutCubic",
+            TimeControlModifier::NormalReverse,
+            [0.32, 0.0, 0.67, 0.0],
+        ),
+        bezier(
+            "[13] easeOutInCubic",
+            TimeControlModifier::ReverseNormal,
+            [0.32, 0.0, 0.67, 0.0],
+        ),
+        bezier(
+            "[14] easeInQuart",
+            TimeControlModifier::Normal,
+            [0.5, 0.0, 0.75, 0.0],
+        ),
+        bezier(
+            "[15] easeOutQuart",
+            TimeControlModifier::Reverse,
+            [0.5, 0.0, 0.75, 0.0],
+        ),
+        bezier(
+            "[16] easeInOutQuart",
+            TimeControlModifier::NormalReverse,
+            [0.5, 0.0, 0.75, 0.0],
+        ),
+        bezier(
+            "[17] easeOutInQuart",
+            TimeControlModifier::ReverseNormal,
+            [0.5, 0.0, 0.75, 0.0],
+        ),
+        bezier(
+            "[18] easeInQuint",
+            TimeControlModifier::Normal,
+            [0.64, 0.0, 0.78, 0.0],
+        ),
+        bezier(
+            "[19] easeOutQuint",
+            TimeControlModifier::Reverse,
+            [0.64, 0.0, 0.78, 0.0],
+        ),
+        bezier(
+            "[20] easeInOutQuint",
+            TimeControlModifier::NormalReverse,
+            [0.64, 0.0, 0.78, 0.0],
+        ),
+        bezier(
+            "[21] easeOutInQuint",
+            TimeControlModifier::ReverseNormal,
+            [0.64, 0.0, 0.78, 0.0],
+        ),
+        bezier(
+            "[22] easeInExpo",
+            TimeControlModifier::Normal,
+            [0.7, 0.0, 0.84, 0.0],
+        ),
+        bezier(
+            "[23] easeOutExpo",
+            TimeControlModifier::Reverse,
+            [0.7, 0.0, 0.84, 0.0],
+        ),
+        bezier(
+            "[24] easeInOutExpo",
+            TimeControlModifier::NormalReverse,
+            [0.7, 0.0, 0.84, 0.0],
+        ),
+        bezier(
+            "[25] easeOutInExpo",
+            TimeControlModifier::ReverseNormal,
+            [0.7, 0.0, 0.84, 0.0],
+        ),
+        bezier(
+            "[26] easeInCirc",
+            TimeControlModifier::Normal,
+            [0.55, 0.0, 1.0, 0.45],
+        ),
+        bezier(
+            "[27] easeOutCirc",
+            TimeControlModifier::Reverse,
+            [0.55, 0.0, 1.0, 0.45],
+        ),
+        bezier(
+            "[28] easeInOutCirc",
+            TimeControlModifier::NormalReverse,
+            [0.55, 0.0, 1.0, 0.45],
+        ),
+        bezier(
+            "[29] easeOutInCirc",
+            TimeControlModifier::ReverseNormal,
+            [0.55, 0.0, 1.0, 0.45],
+        ),
+        elastic("[30] easeInElastic", TimeControlModifier::Reverse),
+        elastic("[31] easeOutElastic", TimeControlModifier::Normal),
+        elastic("[32] easeInOutElastic", TimeControlModifier::ReverseNormal),
+        elastic("[33] easeOutInElastic", TimeControlModifier::NormalReverse),
+        bezier(
+            "[34] easeInBack",
+            TimeControlModifier::Normal,
+            [0.36, 0.0, 0.66, -0.56],
+        ),
+        bezier(
+            "[35] easeOutBack",
+            TimeControlModifier::Reverse,
+            [0.36, 0.0, 0.66, -0.56],
+        ),
+        bezier(
+            "[36] easeInOutBack",
+            TimeControlModifier::NormalReverse,
+            [0.36, 0.0, 0.66, -0.56],
+        ),
+        bezier(
+            "[37] easeOutInBack",
+            TimeControlModifier::ReverseNormal,
+            [0.36, 0.0, 0.66, -0.56],
+        ),
+        bounce("[38] easeInBounce", TimeControlModifier::Reverse),
+        bounce("[39] easeOutBounce", TimeControlModifier::Normal),
+        bounce("[40] easeInOutBounce", TimeControlModifier::ReverseNormal),
+        bounce("[41] easeOutInBounce", TimeControlModifier::NormalReverse),
     ]
 }
 
@@ -668,7 +897,7 @@ mod tests {
     #[test]
     fn elastic_handles_update_parameters() {
         let mut timecontrol = TimeControl::default_for_mode(TimeControlMode::Elastic);
-        let TimeControl::Elastic(elastic) = &mut timecontrol else {
+        let TimeControlCurve::Elastic(elastic) = &mut timecontrol.curve else {
             unreachable!();
         };
 
@@ -681,22 +910,9 @@ mod tests {
     }
 
     #[test]
-    fn elastic_reversed_flips_out_curve() {
-        let out = TimeControlElastic::default();
-        let reversed = TimeControlElastic {
-            reversed: true,
-            ..TimeControlElastic::default()
-        };
-
-        for x in [0.125, 0.25, 0.5, 0.75] {
-            assert!((reversed.y_at_x(x) - (1.0 - out.y_at_x(1.0 - x))).abs() < 0.000001);
-        }
-    }
-
-    #[test]
     fn bounce_timecontrol_starts_ends_and_passes_vertex() {
         let timecontrol = TimeControl::default_for_mode(TimeControlMode::Bounce);
-        let TimeControl::Bounce(bounce) = &timecontrol else {
+        let TimeControlCurve::Bounce(bounce) = &timecontrol.curve else {
             unreachable!();
         };
         let vertex = bounce.vertex;
@@ -718,38 +934,23 @@ mod tests {
     }
 
     #[test]
-    fn bounce_reversed_flips_out_curve() {
-        let out = TimeControlBounce::default();
-        let reversed = TimeControlBounce {
-            reversed: true,
-            ..TimeControlBounce::default()
-        };
+    fn timecontrol_modifier_transforms_curve() {
+        let normal = TimeControl::default_for_mode(TimeControlMode::Bounce);
+        let mut reverse = normal.clone();
+        reverse.modifier = TimeControlModifier::Reverse;
+        let mut normal_reverse = normal.clone();
+        normal_reverse.modifier = TimeControlModifier::NormalReverse;
+        let mut reverse_normal = normal.clone();
+        reverse_normal.modifier = TimeControlModifier::ReverseNormal;
 
-        for x in [0.125, 0.25, 0.5, 0.75] {
-            assert!((reversed.y_at_x(x) - (1.0 - out.y_at_x(1.0 - x))).abs() < 0.000001);
+        for x in [0.125, 0.25, 0.75] {
+            assert!((reverse.y_at_x(x) - (1.0 - normal.y_at_x(1.0 - x))).abs() < 0.000001);
         }
-    }
-
-    #[test]
-    fn presets_use_easings_net_cubic_beziers_and_filtered_modes() {
-        let presets = timecontrol_presets();
-
-        let Some(ease_in_sine) = presets.iter().find(|preset| preset.name == "easeInSine") else {
-            unreachable!();
-        };
-        let TimeControl::Bezier(bezier) = &ease_in_sine.timecontrol else {
-            unreachable!();
-        };
-
-        assert_eq!(bezier.points[0].out_handle, Some([0.12, 0.0]));
-        assert_eq!(bezier.points[1].in_handle, Some([0.39, 0.0]));
-        assert!(presets.iter().any(|preset| preset.name == "easeInBack"));
-        assert!(presets.iter().any(|preset| preset.name == "easeOutBounce"));
-        assert!(presets.iter().any(|preset| preset.name == "easeOutElastic"));
-        assert!(!presets.iter().any(|preset| preset.name == "linear"));
-        assert!(!presets.iter().any(|preset| preset.name == "easeOutSine"));
-        assert!(!presets.iter().any(|preset| preset.name == "easeInBounce"));
-        assert!(!presets.iter().any(|preset| preset.name == "easeInElastic"));
-        assert!(!presets.iter().any(|preset| preset.name.contains("InOut")));
+        assert!((normal_reverse.y_at_x(0.0) - 0.0).abs() < 0.000001);
+        assert!((normal_reverse.y_at_x(0.5) - 0.5).abs() < 0.000001);
+        assert!((normal_reverse.y_at_x(1.0) - 1.0).abs() < 0.000001);
+        assert!((reverse_normal.y_at_x(0.0) - 0.0).abs() < 0.000001);
+        assert!((reverse_normal.y_at_x(0.5) - 0.5).abs() < 0.000001);
+        assert!((reverse_normal.y_at_x(1.0) - 1.0).abs() < 0.000001);
     }
 }
