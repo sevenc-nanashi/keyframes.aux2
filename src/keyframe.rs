@@ -1,3 +1,30 @@
+// このファイルの内容はmimaraka/aviutl-plugin-curve_editorのコードを参考にしています。
+//
+// https://github.com/mimaraka/aviutl-plugin-curve_editor/blob/main/LICENSE.txt
+// ```
+// MIT License
+//
+// Copyright (c) 2022 mimaraka
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+// ```
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Keyframes {
     pub keyframes: Vec<Keyframe>,
@@ -80,7 +107,12 @@ pub struct TimeControlBezierPoint {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TimeControlElastic {
-    pub vertex: [f64; 2],
+    #[serde(default = "TimeControlElastic::default_amplitude")]
+    pub amplitude: f64,
+    #[serde(default = "TimeControlElastic::default_frequency")]
+    pub frequency: f64,
+    #[serde(default = "TimeControlElastic::default_decay")]
+    pub decay: f64,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -97,7 +129,9 @@ impl Default for TimeControl {
 impl Default for TimeControlElastic {
     fn default() -> Self {
         Self {
-            vertex: [0.35, 1.25],
+            amplitude: Self::default_amplitude(),
+            frequency: Self::default_frequency(),
+            decay: Self::default_decay(),
         }
     }
 }
@@ -151,7 +185,7 @@ impl TimeControl {
     pub fn y_at_x(&self, x: f64) -> f64 {
         match self {
             Self::Bezier(bezier) => bezier.y_at_x(x),
-            Self::Elastic(elastic) => Self::interpolated_y_at_x(&elastic.points(), x),
+            Self::Elastic(elastic) => elastic.y_at_x(x),
             Self::Bounce(bounce) => bounce.y_at_x(x),
         }
     }
@@ -178,7 +212,7 @@ impl TimeControl {
     pub fn editable_vertex(&self) -> Option<[f64; 2]> {
         match self {
             Self::Bezier(_) => None,
-            Self::Elastic(elastic) => Some(elastic.vertex),
+            Self::Elastic(_) => None,
             Self::Bounce(bounce) => Some(bounce.vertex),
         }
     }
@@ -186,41 +220,11 @@ impl TimeControl {
     pub fn set_editable_vertex(&mut self, vertex: [f64; 2]) {
         match self {
             Self::Bezier(_) => {}
-            Self::Elastic(elastic) => {
-                elastic.vertex = [vertex[0].clamp(0.001, 0.999), vertex[1]];
-            }
+            Self::Elastic(_) => {}
             Self::Bounce(bounce) => {
                 bounce.vertex = [vertex[0].clamp(0.001, 0.999), vertex[1].clamp(0.0, 1.0)];
             }
         }
-    }
-
-    fn interpolated_y_at_x(points: &[[f64; 2]], x: f64) -> f64 {
-        let x = x.clamp(0.0, 1.0);
-        if x <= 0.0 {
-            return 0.0;
-        }
-        if x >= 1.0 {
-            return 1.0;
-        }
-        let segment_index = points
-            .windows(2)
-            .position(|points| x <= points[1][0])
-            .unwrap_or(points.len().saturating_sub(2));
-        let p0 = points[segment_index.saturating_sub(1)];
-        let p1 = points[segment_index];
-        let p2 = points[(segment_index + 1).min(points.len() - 1)];
-        let p3 = points[(segment_index + 2).min(points.len() - 1)];
-        if (p2[0] - p1[0]).abs() < f64::EPSILON {
-            return p2[1];
-        }
-        let t = ((x - p1[0]) / (p2[0] - p1[0])).clamp(0.0, 1.0);
-        let t2 = t * t;
-        let t3 = t2 * t;
-        0.5 * ((2.0 * p1[1])
-            + (-p0[1] + p2[1]) * t
-            + (2.0 * p0[1] - 5.0 * p1[1] + 4.0 * p2[1] - p3[1]) * t2
-            + (-p0[1] + 3.0 * p1[1] - 3.0 * p2[1] + p3[1]) * t3)
     }
 }
 
@@ -329,57 +333,104 @@ impl TimeControlBezier {
 }
 
 impl TimeControlElastic {
-    fn points(&self) -> Vec<[f64; 2]> {
-        let vertex = [self.vertex[0].clamp(0.001, 0.999), self.vertex[1]];
-        let mut points = vec![[0.0, 0.0], vertex];
-        let mut x = vertex[0];
-        let mut amplitude = vertex[1] - 1.0;
-        let mut sign = -amplitude.signum();
-        let mut remaining = 1.0 - vertex[0];
-        for _ in 0..4 {
-            if remaining <= 0.001 {
-                break;
+    fn default_amplitude() -> f64 {
+        1.0
+    }
+
+    fn default_frequency() -> f64 {
+        5.0
+    }
+
+    fn default_decay() -> f64 {
+        6.0
+    }
+
+    pub fn amp_handle(&self) -> [f64; 2] {
+        [0.0, 1.0 + self.amplitude.clamp(0.0, 1.0)]
+    }
+
+    pub fn freq_decay_handle(&self) -> [f64; 2] {
+        let frequency = self.frequency.max(0.5);
+        let decay = self.decay.max(1.0);
+        [
+            (0.5 / frequency).clamp(0.0001, 1.0),
+            (1.0 - (-(decay - 1.0) * 0.1).exp()).clamp(0.0, 0.9999),
+        ]
+    }
+
+    pub fn set_amp_handle_y(&mut self, y: f64) {
+        self.amplitude = (y - 1.0).clamp(0.0, 1.0);
+    }
+
+    pub fn set_freq_decay_handle(&mut self, point: [f64; 2]) {
+        let x = point[0].clamp(0.0001, 1.0);
+        let y = point[1].clamp(0.0, 0.9999);
+        self.frequency = (0.5 / x).max(0.5);
+        self.decay = -10.0 * (1.0 - y).ln() + 1.0;
+    }
+
+    fn y_at_x(&self, x: f64) -> f64 {
+        // https://github.com/mimaraka/aviutl-plugin-curve_editor/blob/main/curve_editor/curve_elastic.cpp
+        let progress = x.clamp(0.0, 1.0);
+        let amplitude = self.amplitude.clamp(0.0, 1.0);
+        let frequency = self.frequency.max(0.5);
+        let decay = self.decay.max(1.0);
+        let omega = 2.0 * std::f64::consts::PI * frequency;
+        let exp_k = (-decay).exp();
+
+        let func_elastic = |progress: f64| {
+            let coef = if decay == 0.0 {
+                1.0 - progress
+            } else {
+                (exp_k.powf(progress) - exp_k) / (1.0 - exp_k)
+            };
+            1.0 - coef * (omega * progress).cos()
+        };
+        let func_elastic_derivative = |progress: f64| {
+            let angle = omega * progress;
+            let value_cos = angle.cos();
+            let value_sin = angle.sin();
+            if decay == 0.0 {
+                value_cos + omega * (1.0 - progress) * value_sin
+            } else {
+                let exp_kt = exp_k.powf(progress);
+                decay * exp_kt * value_cos + omega * (exp_kt - exp_k) * value_sin
             }
-            remaining *= 0.55;
-            x = (x + remaining).min(0.999);
-            amplitude *= 0.45;
-            points.push([x, 1.0 + amplitude.abs() * sign]);
-            sign *= -1.0;
+        };
+        let func_elastic_derivative_2 = |progress: f64| {
+            let angle = omega * progress;
+            let value_cos = angle.cos();
+            let value_sin = angle.sin();
+            if decay == 0.0 {
+                omega * omega * (1.0 - progress) * value_cos - 2.0 * omega * value_sin
+            } else {
+                let exp_kt = exp_k.powf(progress);
+                let omega_sq = omega * omega;
+                ((omega_sq - decay * decay) * exp_kt - omega_sq * exp_k) * value_cos
+                    - 2.0 * omega * decay * exp_kt * value_sin
+            }
+        };
+
+        let mut extremum_t = (0.5 - (decay / frequency).sqrt() * 0.05) / frequency;
+        for _ in 0..3 {
+            extremum_t -=
+                func_elastic_derivative(extremum_t) / func_elastic_derivative_2(extremum_t);
         }
-        points.push([1.0, 1.0]);
-        dedup_monotonic_points(points)
+        let extremum_x = func_elastic(extremum_t);
+        let value = func_elastic(progress);
+        let ret = if progress < extremum_t {
+            (amplitude * (extremum_x - 1.0) + 1.0) / extremum_x * value
+        } else {
+            amplitude * (value - 1.0) + 1.0
+        };
+
+        ret.clamp(0.0, 2.0)
     }
 }
 
 impl TimeControlBounce {
     fn y_at_x(&self, x: f64) -> f64 {
         // https://github.com/mimaraka/aviutl-plugin-curve_editor/blob/main/curve_editor/curve_bounce.cpp
-        // より借用。
-        //
-        // https://github.com/mimaraka/aviutl-plugin-curve_editor/blob/main/LICENSE.txt
-        // ```
-        // MIT License
-        //
-        // Copyright (c) 2022 mimaraka
-        //
-        // Permission is hereby granted, free of charge, to any person obtaining a copy
-        // of this software and associated documentation files (the "Software"), to deal
-        // in the Software without restriction, including without limitation the rights
-        // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-        // copies of the Software, and to permit persons to whom the Software is
-        // furnished to do so, subject to the following conditions:
-        //
-        // The above copyright notice and this permission notice shall be included in all
-        // copies or substantial portions of the Software.
-        //
-        // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-        // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-        // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-        // AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-        // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-        // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-        // SOFTWARE.
-        // ```
         let progress = x.clamp(0.0, 1.0);
         let handle_x = self.vertex[0].clamp(0.001, 0.999);
         let handle_y = self.vertex[1].clamp(0.001, 1.0);
@@ -408,21 +459,6 @@ impl TimeControlBounce {
 
         (1.0 + ret).clamp(0.0, 1.0)
     }
-}
-
-fn dedup_monotonic_points(mut points: Vec<[f64; 2]>) -> Vec<[f64; 2]> {
-    points.sort_by(|a, b| a[0].total_cmp(&b[0]));
-    let mut result = Vec::with_capacity(points.len());
-    for point in points {
-        if result
-            .last()
-            .is_some_and(|last: &[f64; 2]| (last[0] - point[0]).abs() < 0.000_001)
-        {
-            continue;
-        }
-        result.push(point);
-    }
-    result
 }
 
 #[derive(Debug, Clone)]
@@ -530,16 +566,26 @@ mod tests {
     }
 
     #[test]
-    fn elastic_timecontrol_starts_ends_and_passes_vertex() {
+    fn elastic_timecontrol_starts_and_ends_at_anchors() {
         let timecontrol = TimeControl::default_for_mode(TimeControlMode::Elastic);
-        let TimeControl::Elastic(elastic) = &timecontrol else {
-            unreachable!();
-        };
-        let vertex = elastic.vertex;
 
         assert!((timecontrol.y_at_x(0.0) - 0.0).abs() < 0.000001);
         assert!((timecontrol.y_at_x(1.0) - 1.0).abs() < 0.000001);
-        assert!((timecontrol.y_at_x(vertex[0]) - vertex[1]).abs() < 0.000001);
+    }
+
+    #[test]
+    fn elastic_handles_update_parameters() {
+        let mut timecontrol = TimeControl::default_for_mode(TimeControlMode::Elastic);
+        let TimeControl::Elastic(elastic) = &mut timecontrol else {
+            unreachable!();
+        };
+
+        elastic.set_amp_handle_y(1.5);
+        elastic.set_freq_decay_handle([0.25, 0.5]);
+
+        assert!((elastic.amplitude - 0.5).abs() < 0.000001);
+        assert!((elastic.frequency - 2.0).abs() < 0.000001);
+        assert!((elastic.freq_decay_handle()[1] - 0.5).abs() < 0.000001);
     }
 
     #[test]

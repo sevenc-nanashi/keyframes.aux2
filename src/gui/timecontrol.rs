@@ -128,7 +128,7 @@ impl KeyframesGui {
             return;
         }
 
-        target.vertical_zoom = target.vertical_zoom.clamp(0.25, 8.0);
+        target.vertical_zoom = target.vertical_zoom.clamp(1.0, 8.0);
         target.vertical_scroll = target.vertical_scroll.clamp(0.0, 1.0);
         let content_size = ui.available_size();
         let total_width = content_size.x;
@@ -251,9 +251,10 @@ impl KeyframesGui {
             ui.allocate_painter(available_size, egui::Sense::click_and_drag());
         let mut rect = response.rect.shrink(response.rect.height() * 0.1);
         rect.set_left(rect.left() + rect.height() * 0.1);
-        let visible_y_range = 1.0 / (*vertical_zoom).clamp(0.25, 8.0);
         let (content_min_y, content_max_y) = Self::timecontrol_vertical_bounds(timecontrol);
-        let content_y_range = content_max_y - content_min_y;
+        let content_y_range = (content_max_y - content_min_y).max(0.000_001);
+        *vertical_zoom = (*vertical_zoom).clamp(1.0, 8.0);
+        let visible_y_range = content_y_range / *vertical_zoom;
         let (scroll_min_y, scroll_max_y) = if content_y_range >= visible_y_range {
             (content_min_y, content_max_y - visible_y_range)
         } else {
@@ -270,10 +271,9 @@ impl KeyframesGui {
             });
             if ctrl {
                 if (zoom_delta - 1.0).abs() > f64::EPSILON {
-                    *vertical_zoom = (*vertical_zoom * zoom_delta).clamp(0.25, 8.0);
+                    *vertical_zoom = (*vertical_zoom * zoom_delta).clamp(1.0, 8.0);
                 } else if scroll_delta.abs() > f64::EPSILON {
-                    *vertical_zoom =
-                        (*vertical_zoom * (scroll_delta * 0.01).exp()).clamp(0.25, 8.0);
+                    *vertical_zoom = (*vertical_zoom * (scroll_delta * 0.01).exp()).clamp(1.0, 8.0);
                 }
             } else if scroll_delta.abs() > f64::EPSILON
                 && rect.height() > f32::EPSILON
@@ -351,6 +351,18 @@ impl KeyframesGui {
             if structure_changed {
                 return (changed, commit_requested);
             }
+        } else if let crate::keyframe::TimeControl::Elastic(_) = timecontrol {
+            let (elastic_changed, elastic_commit_requested) =
+                Self::show_timecontrol_elastic_handles(
+                    ui,
+                    &painter,
+                    timecontrol,
+                    viewport,
+                    vertical_scroll,
+                    movable_y_range,
+                );
+            changed |= elastic_changed;
+            commit_requested |= elastic_commit_requested;
         } else {
             let (vertex_changed, vertex_commit_requested) = Self::show_timecontrol_vertex(
                 ui,
@@ -380,6 +392,12 @@ impl KeyframesGui {
                     max_y = max_y.max(position[1]);
                 }
             }
+        } else if matches!(timecontrol, crate::keyframe::TimeControl::Elastic(_)) {
+            min_y = 0.0;
+            max_y = 2.0;
+        } else if matches!(timecontrol, crate::keyframe::TimeControl::Bounce(_)) {
+            min_y = 0.0;
+            max_y = 1.0;
         } else {
             for position in timecontrol
                 .sampled_points(96)
@@ -830,6 +848,114 @@ impl KeyframesGui {
         };
         Self::draw_timecontrol_anchor(painter, vertex_pos, false, color);
         (changed, response.drag_stopped())
+    }
+
+    fn show_timecontrol_elastic_handles(
+        ui: &mut egui::Ui,
+        painter: &egui::Painter,
+        timecontrol: &mut crate::keyframe::TimeControl,
+        viewport: TimeControlViewport,
+        vertical_scroll: &mut f64,
+        movable_y_range: f64,
+    ) -> (bool, bool) {
+        let crate::keyframe::TimeControl::Elastic(elastic) = timecontrol else {
+            return (false, false);
+        };
+
+        let amp_y = elastic.amp_handle()[1];
+        let amp_handles = [[0.0, amp_y], [1.0, amp_y]];
+        let freq_decay_handle = elastic.freq_decay_handle();
+        let control_stroke = egui::Stroke::new(1.0, GUI_COLORS.anchor_line);
+        painter.line_segment(
+            [
+                viewport.graph_to_screen(amp_handles[0]),
+                viewport.graph_to_screen(amp_handles[1]),
+            ],
+            control_stroke,
+        );
+        painter.line_segment(
+            [
+                viewport.graph_to_screen([freq_decay_handle[0], 1.0]),
+                viewport.graph_to_screen(freq_decay_handle),
+            ],
+            control_stroke,
+        );
+
+        let mut changed = false;
+        let mut commit_requested = false;
+        for (index, handle) in amp_handles.into_iter().enumerate() {
+            let handle_pos = viewport.graph_to_screen(handle);
+            let handle_rect = egui::Rect::from_center_size(handle_pos, egui::Vec2::splat(18.0));
+            let response = ui.interact(
+                handle_rect,
+                ui.id().with(("timecontrol_elastic_amp", index)),
+                egui::Sense::click_and_drag(),
+            );
+            if response.dragged()
+                && let Some(pointer_pos) = response.interact_pointer_pos()
+            {
+                let position = Self::timecontrol_drag_position(
+                    viewport.screen_to_graph(pointer_pos),
+                    Self::timecontrol_drag_modifiers(ui),
+                    None,
+                );
+                let old_amplitude = elastic.amplitude;
+                elastic.set_amp_handle_y(position[1]);
+                changed |= (elastic.amplitude - old_amplitude).abs() > f64::EPSILON;
+                Self::scroll_timecontrol_y_for_drag(
+                    ui,
+                    vertical_scroll,
+                    viewport,
+                    movable_y_range,
+                    pointer_pos,
+                );
+            }
+            commit_requested |= response.drag_stopped();
+            let color = if response.hovered() || response.dragged() {
+                GUI_COLORS.anchor_select
+            } else {
+                GUI_COLORS.anchor
+            };
+            Self::draw_timecontrol_anchor(painter, handle_pos, false, color);
+        }
+
+        let handle_pos = viewport.graph_to_screen(freq_decay_handle);
+        let handle_rect = egui::Rect::from_center_size(handle_pos, egui::Vec2::splat(18.0));
+        let response = ui.interact(
+            handle_rect,
+            ui.id().with("timecontrol_elastic_freq_decay"),
+            egui::Sense::click_and_drag(),
+        );
+        if response.dragged()
+            && let Some(pointer_pos) = response.interact_pointer_pos()
+        {
+            let position = Self::timecontrol_drag_position(
+                viewport.screen_to_graph(pointer_pos),
+                Self::timecontrol_drag_modifiers(ui),
+                None,
+            );
+            let old_frequency = elastic.frequency;
+            let old_decay = elastic.decay;
+            elastic.set_freq_decay_handle(position);
+            changed |= (elastic.frequency - old_frequency).abs() > f64::EPSILON
+                || (elastic.decay - old_decay).abs() > f64::EPSILON;
+            Self::scroll_timecontrol_y_for_drag(
+                ui,
+                vertical_scroll,
+                viewport,
+                movable_y_range,
+                pointer_pos,
+            );
+        }
+        commit_requested |= response.drag_stopped();
+        let color = if response.hovered() || response.dragged() {
+            GUI_COLORS.anchor_select
+        } else {
+            GUI_COLORS.anchor
+        };
+        Self::draw_timecontrol_anchor(painter, handle_pos, false, color);
+
+        (changed, commit_requested)
     }
 
     fn show_timecontrol_anchor_menu(
