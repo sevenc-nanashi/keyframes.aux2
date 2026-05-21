@@ -16,7 +16,8 @@ if bank_id == 0 then
   return left + (right - left) * ratio
 end
 
-local indices, script_name, script, accelerate, decelerate, params = mod.get_keyframe(bank_id, keyframe_id, index)
+local indices, script_name, script, script_dir, accelerate, decelerate, params = mod.get_keyframe(bank_id, keyframe_id,
+  index)
 
 local inner_G = {}
 local inner_obj = {}
@@ -74,7 +75,7 @@ inner_obj.getpoint = function(...)
     local target_time = option2 or obj.getpoint("time")
     local left_time = obj.getpoint("time", indices[1])
     local right_time = obj.getpoint("time", indices[#indices])
-    local ratio = (target_time - left_time) / (right_time - left_time)
+    ratio = (target_time - left_time) / (right_time - left_time)
     local value = mod.get_timecontrol_value(bank_id, keyframe_id, index, ratio)
     if option == "value" then
       return value
@@ -97,13 +98,28 @@ inner_obj.getpoint = function(...)
       end
     end
     return #indices - 1 +
-    (remapped_time - obj.getpoint("time", indices[#indices])) /
-    (obj.getpoint("time", indices[#indices]) - obj.getpoint("time", indices[#indices - 1]))
+        (remapped_time - obj.getpoint("time", indices[#indices])) /
+        (obj.getpoint("time", indices[#indices]) - obj.getpoint("time", indices[#indices - 1]))
   else
     return obj.getpoint(unpack(args))
     -- local ret = { obj.getpoint(unpack(args)) }
     -- return unpack(ret)
   end
+end
+
+inner_G.require = function(name)
+  if #script_dir > 0 then
+    package.path = script_dir .. "/?.lua;" .. script_dir .. "/?.dll;" .. package.path
+  end
+  local ok, result = pcall(require, name)
+  if #script_dir > 0 then
+    package.path = string.gsub(package.path, script_dir .. "/%?%.lua;", "")
+    package.path = string.gsub(package.path, script_dir .. "/%?%.dll;", "")
+  end
+  if not ok then
+    error("Failed to require module '" .. name .. "': " .. tostring(result))
+  end
+  return result
 end
 
 if inspect then

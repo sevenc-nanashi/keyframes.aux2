@@ -183,6 +183,7 @@ pub struct Easing {
     pub name: String,
     pub script: String,
     pub label: Option<String>,
+    pub path: Option<std::path::PathBuf>,
     pub has_speed: bool,
     pub default_acceleration: bool,
     pub default_deceleration: bool,
@@ -192,11 +193,12 @@ pub struct Easing {
 }
 
 impl Easing {
-    pub fn from_script(name: &str, script: &str) -> Easing {
+    pub fn from_script(path: Option<std::path::PathBuf>, name: &str, script: &str) -> Easing {
         let mut easing = Easing {
             name: name.to_string(),
             script: script.to_string(),
             label: None,
+            path,
             has_speed: false,
             default_acceleration: false,
             default_deceleration: false,
@@ -238,13 +240,16 @@ impl Easing {
 
         easing
     }
-    pub fn from_multi_script(multi_script: &str) -> Vec<Easing> {
+    pub fn from_multi_script(
+        mut path: Option<std::path::PathBuf>,
+        multi_script: &str,
+    ) -> Vec<Easing> {
         let mut current_script: Option<(String, String)> = None;
         let mut easings = Vec::new();
         for line in multi_script.lines() {
             if let Some(script_name) = line.strip_prefix("@") {
                 if let Some((name, script)) = current_script.take() {
-                    easings.push(Self::from_script(&name, &script));
+                    easings.push(Self::from_script(path.clone(), &name, &script));
                 }
                 let script_name = script_name.trim();
                 if !script_name.is_empty() {
@@ -257,7 +262,7 @@ impl Easing {
         }
 
         if let Some((name, script)) = current_script.take() {
-            easings.push(Self::from_script(&name, &script));
+            easings.push(Self::from_script(path.take(), &name, &script));
         }
 
         easings

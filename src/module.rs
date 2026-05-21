@@ -27,7 +27,7 @@ impl KeyframesMod2 {
         bank_id: i32,
         track_id: i32,
         index: usize,
-    ) -> aviutl2::common::AnyResult<(Vec<i32>, String, String, bool, bool, Vec<f64>)> {
+    ) -> aviutl2::common::AnyResult<(Vec<i32>, String, String, String, bool, bool, Vec<f64>)> {
         let param = crate::KeyframeTrackParams {
             bank_id: bank_id as _,
             keyframes_id: track_id as _,
@@ -72,6 +72,13 @@ impl KeyframesMod2 {
             indices,
             easing.name.clone(),
             easing.script.clone(),
+            easing
+                .path
+                .clone()
+                .unwrap_or_default()
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
             keyframe.acceleration,
             keyframe.deceleration,
             keyframe.params.clone(),

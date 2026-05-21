@@ -244,7 +244,7 @@ fn load_effects() -> anyhow::Result<()> {
     tracing::info!("Loading easings...");
     let mut easings = vec![];
     let standard_easings =
-        crate::keyframe::Easing::from_multi_script(include_str!("../build/@embedded.tra2"));
+        crate::keyframe::Easing::from_multi_script(None, include_str!("../build/@embedded.tra2"));
     tracing::info!("Loaded standard easings: {}", standard_easings.len());
     easings.extend(standard_easings);
 
@@ -253,8 +253,9 @@ fn load_effects() -> anyhow::Result<()> {
         .parent()
         .unwrap()
         .join("script.tra2");
-    if let Ok(content) = std::fs::read_to_string(bundled_easings) {
-        let bundled_easings = crate::keyframe::Easing::from_multi_script(&content);
+    if let Ok(content) = std::fs::read_to_string(&bundled_easings) {
+        let bundled_easings =
+            crate::keyframe::Easing::from_multi_script(Some(bundled_easings), &content);
         for easing in &bundled_easings {
             tracing::info!("Loaded bundled easing: {}", &easing.name);
         }
@@ -331,9 +332,8 @@ fn load_effects() -> anyhow::Result<()> {
             .unwrap_or_default()
             .to_string_lossy()
             .starts_with('@');
-        let content_starts_with_at = encoded.trim_start().starts_with('@');
-        if file_name_starts_with_at || content_starts_with_at {
-            let scripts = crate::keyframe::Easing::from_multi_script(&encoded);
+        if file_name_starts_with_at {
+            let scripts = crate::keyframe::Easing::from_multi_script(Some(file.clone()), &encoded);
             for mut script in scripts {
                 if file_name_starts_with_at {
                     tracing::info!(
@@ -349,7 +349,8 @@ fn load_effects() -> anyhow::Result<()> {
                 easings.push(script);
             }
         } else {
-            let mut easing = crate::keyframe::Easing::from_script(&file_stem, &encoded);
+            let mut easing =
+                crate::keyframe::Easing::from_script(Some(file.clone()), &file_stem, &encoded);
             tracing::info!("Loaded easing from script file: {}", file_stem);
             easing.label = easing.label.or_else(|| label.clone());
             easings.push(easing);
