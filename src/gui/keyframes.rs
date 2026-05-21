@@ -795,7 +795,7 @@ impl KeyframesGui {
                 acceleration: easing.default_acceleration,
                 deceleration: easing.default_deceleration,
                 params: easing.params.values().cloned().collect(),
-                timecontrol: crate::keyframe::TimeControlBezier::default(),
+                timecontrol: crate::keyframe::TimeControl::default(),
             });
 
         if easing.ignore_midpoints {

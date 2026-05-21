@@ -19,7 +19,7 @@ pub(super) struct TimeControlEditorTarget {
     pub(super) effect_name: String,
     pub(super) effect_index: usize,
     pub(super) track_names: Vec<String>,
-    pub(super) timecontrol: crate::keyframe::TimeControlBezier,
+    pub(super) timecontrol: crate::keyframe::TimeControl,
     pub(super) selected_point: usize,
     pub(super) context_menu_position: Option<[f64; 2]>,
     pub(super) vertical_zoom: f64,
