@@ -29,6 +29,7 @@ pub static CURRENT_BANK: std::sync::LazyLock<std::sync::Mutex<usize>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(1));
 pub static CURRENT_KEYFRAMES_ID: std::sync::LazyLock<std::sync::Mutex<usize>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(0));
+pub static SHUTTING_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct KeyframeTrackParams {
     pub bank_id: usize,
@@ -202,6 +203,15 @@ impl aviutl2::generic::GenericPlugin for KeyframesAux2 {
             *current_bank_id += 1;
         }
         clear_unused_keyframes(&edit.info, edit);
+    }
+}
+
+impl Drop for KeyframesAux2 {
+    fn drop(&mut self) {
+        // UninitializePlugin中にEDIT_HANDLEを使うと死ぬので、ここでフラグを立てておく
+        // もっともこれですべての処理を回避できるわけではない（タイミング的な問題）が、まぁある程度はマシになるはず...
+        // 本来はAviUtl2はUninitializePluginを呼び終わるまでEDIT_HANDLEが有効であるべき
+        SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

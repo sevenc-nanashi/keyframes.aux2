@@ -191,7 +191,9 @@ static RESOLVED_MIGRATIONS: std::sync::LazyLock<
 
 impl aviutl2_eframe::eframe::App for KeyframesGui {
     fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if crate::EDIT_HANDLE.is_ready() {
+        if crate::EDIT_HANDLE.is_ready()
+            && !crate::SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst)
+        {
             if !crate::EDIT_HANDLE
                 .get_edit_state()
                 .is_ok_and(|state| state == aviutl2::generic::EditState::Edit)
@@ -291,7 +293,9 @@ impl aviutl2_eframe::eframe::App for KeyframesGui {
     ) {
         ui.request_repaint_after(std::time::Duration::from_millis(100));
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            if crate::EDIT_HANDLE.is_ready() {
+            if crate::SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) {
+                ui.label("Shutting down...");
+            } else if crate::EDIT_HANDLE.is_ready() {
                 if self.is_undo_mode() {
                     self.render_undo_mode_warning(ui);
                 } else if self.timecontrol_editor.is_some() {
