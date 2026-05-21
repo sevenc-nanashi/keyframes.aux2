@@ -247,9 +247,8 @@ impl KeyframesGui {
         }
         let (response, painter) =
             ui.allocate_painter(available_size, egui::Sense::click_and_drag());
-        let rect = response
-            .rect
-            .shrink(response.rect.width().min(response.rect.height()) * 0.15);
+        let mut rect = response.rect.shrink(response.rect.height() * 0.1);
+        rect.set_left(rect.left() + rect.height() * 0.1);
         let visible_y_range = 1.0 / (*vertical_zoom).clamp(0.25, 8.0);
         let (content_min_y, content_max_y) = Self::timecontrol_vertical_bounds(timecontrol);
         let content_y_range = content_max_y - content_min_y;
