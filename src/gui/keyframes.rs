@@ -529,12 +529,12 @@ impl KeyframesGui {
             return;
         }
 
-        if ui.button("引き継ぎ").clicked() {
+        if ui.button("中間点").clicked() {
             let mut new_keyframes = keyframes.clone();
             new_keyframes.keyframes[index] = crate::keyframe::Keyframe::Midpoint;
             update_keyframe(new_keyframes);
         }
-        if ui.button("無視").clicked() {
+        if ui.button("継続").clicked() {
             let mut new_keyframes = keyframes.clone();
             new_keyframes.keyframes[index] = crate::keyframe::Keyframe::Ignored;
             update_keyframe(new_keyframes);
