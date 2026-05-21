@@ -312,7 +312,7 @@ impl KeyframesGui {
         let grid_label_font = egui::FontId::proportional(11.0);
         for i in start_grid_y..=end_grid_y {
             let y = i as f64 / 4.0;
-            let stroke = if i == 0 || i == 4 {
+            let stroke = if y % 1.0 == 0.0 {
                 strong_grid_stroke
             } else {
                 grid_stroke
@@ -413,11 +413,19 @@ impl KeyframesGui {
                 if handle_response.dragged()
                     && let Some(pointer_pos) = handle_response.interact_pointer_pos()
                 {
+                    let (shift, alt) = ui.input(|i| (i.modifiers.shift, i.modifiers.alt));
+                    let mut position = from_screen(pointer_pos);
+                    if alt {
+                        position = Self::snap_timecontrol_position(position, 0.1);
+                    }
+                    if shift {
+                        position[1] = timecontrol.points[point_index].position[1];
+                    }
                     let new_point = Self::constrain_timecontrol_handle_position(
                         timecontrol,
                         point_index,
                         handle_kind,
-                        from_screen(pointer_pos),
+                        position,
                     );
                     let changed_handle = match handle_kind {
                         TimeControlHandleKind::In => {
@@ -498,7 +506,11 @@ impl KeyframesGui {
             if handle_response.dragged()
                 && let Some(pointer_pos) = handle_response.interact_pointer_pos()
             {
-                let new_position = from_screen(pointer_pos);
+                let alt = ui.input(|i| i.modifiers.alt);
+                let mut new_position = from_screen(pointer_pos);
+                if alt {
+                    new_position = Self::snap_timecontrol_position(new_position, 0.1);
+                }
                 if Self::move_timecontrol_anchor(timecontrol, point_index, new_position) {
                     changed = true;
                     keep_y_in_scroll_range(vertical_scroll, new_position[1]);
@@ -694,6 +706,13 @@ impl KeyframesGui {
     }
 
     const TIMECONTROL_MIN_ANCHOR_DISTANCE: f64 = 0.001;
+
+    fn snap_timecontrol_position(position: [f64; 2], step: f64) -> [f64; 2] {
+        [
+            (position[0] / step).round() * step,
+            (position[1] / step).round() * step,
+        ]
+    }
 
     fn move_timecontrol_anchor(
         timecontrol: &mut crate::keyframe::TimeControlBezier,
