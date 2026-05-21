@@ -294,8 +294,7 @@ impl aviutl2_eframe::eframe::App for KeyframesGui {
             if crate::EDIT_HANDLE.is_ready() {
                 if self.is_undo_mode() {
                     self.render_undo_mode_warning(ui);
-                }
-                if self.timecontrol_editor.is_some() {
+                } else if self.timecontrol_editor.is_some() {
                     self.render_timecontrol_editor(ui);
                 } else {
                     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -338,7 +337,7 @@ impl KeyframesGui {
 
         let mut layout = egui::text::LayoutJob::default();
         layout.append(
-            "一時停止中",
+            "一時停止中\n",
             0.0,
             egui::TextFormat {
                 font_id: egui::FontId::proportional(18.0),

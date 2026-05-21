@@ -51,6 +51,10 @@ impl KeyframesMod2 {
         };
         for i in (index + 1)..keyframes.keyframes.len() {
             match &keyframes.keyframes[i] {
+                _ if i == keyframes.keyframes.len() - 1 => {
+                    indices.push(i as i32);
+                    break;
+                }
                 crate::keyframe::Keyframe::Easing(_) => {
                     indices.push(i as i32);
                     break;
