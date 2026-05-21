@@ -633,9 +633,10 @@ impl KeyframesGui {
             } else {
                 GUI_COLORS.anchor
             };
-            painter.rect_filled(
-                egui::Rect::from_center_size(point, egui::Vec2::splat(10.0)),
-                2.0,
+            Self::draw_timecontrol_anchor(
+                painter,
+                point,
+                timecontrol.points[point_index].handles_separated,
                 color,
             );
             let before_len = timecontrol.points.len();
@@ -656,6 +657,33 @@ impl KeyframesGui {
         }
 
         (changed, commit_requested, false)
+    }
+
+    fn draw_timecontrol_anchor(
+        painter: &egui::Painter,
+        center: egui::Pos2,
+        separated_handles: bool,
+        color: egui::Color32,
+    ) {
+        if separated_handles {
+            let radius = 6.0;
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    egui::pos2(center.x, center.y - radius),
+                    egui::pos2(center.x + radius, center.y),
+                    egui::pos2(center.x, center.y + radius),
+                    egui::pos2(center.x - radius, center.y),
+                ],
+                color,
+                egui::Stroke::NONE,
+            ));
+        } else {
+            painter.rect_filled(
+                egui::Rect::from_center_size(center, egui::Vec2::splat(10.0)),
+                2.0,
+                color,
+            );
+        }
     }
 
     fn format_timecontrol_grid_label(value: f64) -> String {
@@ -819,7 +847,7 @@ impl KeyframesGui {
         horizontal_snap_y: Option<f64>,
     ) -> [f64; 2] {
         if modifiers.alt {
-            position = Self::snap_timecontrol_position(position, 0.1);
+            position = Self::snap_timecontrol_position(position, 0.125);
         }
         if let Some(y) = horizontal_snap_y
             && modifiers.shift
