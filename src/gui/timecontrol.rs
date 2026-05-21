@@ -89,16 +89,14 @@ impl KeyframesGui {
         let Some(mut target) = self.timecontrol_editor.clone() else {
             return;
         };
-        let keyframes = match crate::KEYFRAMES.get(&target.params) {
-            Some(keyframes) => keyframes,
-            None => {
-                self.timecontrol_editor = None;
-                return;
+        let easing_name = match crate::KEYFRAMES.get(&target.params).and_then(|keyframes| {
+            match keyframes.keyframes.get(target.keyframe_index) {
+                Some(crate::keyframe::Keyframe::Easing(kf_info)) => Some(kf_info.easing.clone()),
+                _ => None,
             }
-        };
-        let keyframe = match keyframes.keyframes.get(target.keyframe_index) {
-            Some(crate::keyframe::Keyframe::Easing(kf_info)) => kf_info,
-            _ => {
+        }) {
+            Some(easing_name) => easing_name,
+            None => {
                 self.timecontrol_editor = None;
                 return;
             }
@@ -121,7 +119,7 @@ impl KeyframesGui {
                         target.track_names.len() - 1
                     )
                 },
-                keyframe.easing
+                easing_name
             ));
         });
         ui.separator();
@@ -317,6 +315,7 @@ impl KeyframesGui {
                 context_menu_position,
                 viewport,
                 vertical_scroll,
+                movable_y_range,
             );
         changed |= handle_changed;
         commit_requested |= handle_commit_requested;
@@ -333,6 +332,7 @@ impl KeyframesGui {
                 context_menu_position,
                 viewport,
                 vertical_scroll,
+                movable_y_range,
             );
         changed |= anchor_changed;
         commit_requested |= anchor_commit_requested;
@@ -475,6 +475,7 @@ impl KeyframesGui {
         context_menu_position: &mut Option<[f64; 2]>,
         viewport: TimeControlViewport,
         vertical_scroll: &mut f64,
+        movable_y_range: f64,
     ) -> (bool, bool, bool) {
         let mut changed = false;
         let mut commit_requested = false;
@@ -536,12 +537,14 @@ impl KeyframesGui {
                             new_point,
                         );
                         changed = true;
-                        Self::keep_timecontrol_y_in_scroll_range(
-                            vertical_scroll,
-                            viewport,
-                            new_point[1],
-                        );
                     }
+                    Self::scroll_timecontrol_y_for_drag(
+                        ui,
+                        vertical_scroll,
+                        viewport,
+                        movable_y_range,
+                        pointer_pos,
+                    );
                 }
                 commit_requested |= handle_response.drag_stopped();
                 let color = if handle_response.hovered() || handle_response.dragged() {
@@ -585,6 +588,7 @@ impl KeyframesGui {
         context_menu_position: &mut Option<[f64; 2]>,
         viewport: TimeControlViewport,
         vertical_scroll: &mut f64,
+        movable_y_range: f64,
     ) -> (bool, bool, bool) {
         let mut changed = false;
         let mut commit_requested = false;
@@ -616,12 +620,14 @@ impl KeyframesGui {
                 );
                 if Self::move_timecontrol_anchor(timecontrol, point_index, new_position) {
                     changed = true;
-                    Self::keep_timecontrol_y_in_scroll_range(
-                        vertical_scroll,
-                        viewport,
-                        new_position[1],
-                    );
                 }
+                Self::scroll_timecontrol_y_for_drag(
+                    ui,
+                    vertical_scroll,
+                    viewport,
+                    movable_y_range,
+                    pointer_pos,
+                );
             }
             commit_requested |= handle_response.drag_stopped();
             let color = if handle_response.hovered()
@@ -856,16 +862,31 @@ impl KeyframesGui {
         position
     }
 
-    fn keep_timecontrol_y_in_scroll_range(
+    fn scroll_timecontrol_y_for_drag(
+        ui: &egui::Ui,
         vertical_scroll: &mut f64,
         viewport: TimeControlViewport,
-        y: f64,
+        movable_y_range: f64,
+        pointer_pos: egui::Pos2,
     ) {
-        if y < viewport.min_y {
-            *vertical_scroll = 0.0;
-        } else if y > viewport.max_y {
-            *vertical_scroll = 1.0;
+        if viewport.rect.height() <= f32::EPSILON || movable_y_range <= f64::EPSILON {
+            return;
         }
+
+        let overflow = if pointer_pos.y < viewport.rect.top() {
+            viewport.rect.top() - pointer_pos.y
+        } else if pointer_pos.y > viewport.rect.bottom() {
+            viewport.rect.bottom() - pointer_pos.y
+        } else {
+            return;
+        };
+
+        let visible_y_range = viewport.max_y - viewport.min_y;
+        let scroll_y = overflow as f64 / viewport.rect.height() as f64 * visible_y_range;
+        let max_scroll_y = visible_y_range * 0.1;
+        let scroll_y = scroll_y.clamp(-max_scroll_y, max_scroll_y);
+        *vertical_scroll = (*vertical_scroll + scroll_y / movable_y_range).clamp(0.0, 1.0);
+        ui.ctx().request_repaint();
     }
 
     fn move_timecontrol_anchor(

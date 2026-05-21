@@ -96,7 +96,10 @@ impl KeyframesGui {
             num_divisions,
         );
 
-        let Some(keyframes) = crate::KEYFRAMES.get(params) else {
+        let Some(keyframes) = crate::KEYFRAMES
+            .get(params)
+            .map(|keyframes| keyframes.clone())
+        else {
             self.render_frame_cursor(&painter, info, object, response.rect, total_frames);
             return;
         };
@@ -414,8 +417,11 @@ impl KeyframesGui {
         let res = crate::EDIT_HANDLE
             .call_edit_section(|edit| {
                 let new_params = crate::KeyframeTrackParams::new();
-                if let Some(keyframes) = crate::KEYFRAMES.get(params) {
-                    crate::KEYFRAMES.insert(new_params, keyframes.clone());
+                if let Some(keyframes) = crate::KEYFRAMES
+                    .get(params)
+                    .map(|keyframes| keyframes.clone())
+                {
+                    crate::KEYFRAMES.insert(new_params, keyframes);
                 }
                 let mut before =
                     edit.get_object_effect_item(object.handle, &effect.name, effect.index, name)?;

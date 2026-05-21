@@ -414,8 +414,11 @@ impl KeyframesGui {
                     );
                     let new_params = *migrations.entry(*params).or_default();
                     change_bindings.insert(binding.clone(), new_params);
-                    if let Some(keyframes) = crate::KEYFRAMES.get(params) {
-                        crate::KEYFRAMES.insert(new_params, keyframes.clone());
+                    if let Some(keyframes) = crate::KEYFRAMES
+                        .get(params)
+                        .map(|keyframes| keyframes.clone())
+                    {
+                        crate::KEYFRAMES.insert(new_params, keyframes);
                     }
                     migrations.insert(*params, new_params);
                 } else if params.bank_id == 0 {
