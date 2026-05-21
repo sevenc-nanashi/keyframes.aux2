@@ -632,9 +632,6 @@ impl KeyframesGui {
                         }
                     });
                     ui.add_space(spacing);
-                    if selected.is_some() {
-                        break;
-                    }
                 }
             });
         selected

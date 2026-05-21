@@ -23,3 +23,4 @@ windows = { version = "0.62.2", features = ["Win32_UI_HiDpi"] }
 
 [patch.crates-io]
 aviutl2 = { git = "https://github.com/sevenc-nanashi/aviutl2-rs" }
+aviutl2-eframe = { git = "https://github.com/sevenc-nanashi/aviutl2-rs" }

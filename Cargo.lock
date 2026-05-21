@@ -142,7 +142,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 [[package]]
 name = "aviutl2"
 version = "0.29.0"
-source = "git+https://github.com/sevenc-nanashi/aviutl2-rs#8824abeb5bef60653eeffda671b06514ee1ab526"
+source = "git+https://github.com/sevenc-nanashi/aviutl2-rs#b420ca57174d114f8ccf05dbb342f6c49fd7358c"
 dependencies = [
  "anyhow",
  "aviutl2-alias",
@@ -172,7 +172,7 @@ dependencies = [
 [[package]]
 name = "aviutl2-alias"
 version = "0.29.0"
-source = "git+https://github.com/sevenc-nanashi/aviutl2-rs#8824abeb5bef60653eeffda671b06514ee1ab526"
+source = "git+https://github.com/sevenc-nanashi/aviutl2-rs#b420ca57174d114f8ccf05dbb342f6c49fd7358c"
 dependencies = [
  "duplicate",
  "indexmap",
@@ -182,8 +182,7 @@ dependencies = [
 [[package]]
 name = "aviutl2-eframe"
 version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b77aad8ce4752e504b9f833b9d299682e27a7aca6c7c797cba9fdd3364c1ba4"
+source = "git+https://github.com/sevenc-nanashi/aviutl2-rs#b420ca57174d114f8ccf05dbb342f6c49fd7358c"
 dependencies = [
  "anyhow",
  "aviutl2",
@@ -196,7 +195,7 @@ dependencies = [
 [[package]]
 name = "aviutl2-macros"
 version = "0.29.0"
-source = "git+https://github.com/sevenc-nanashi/aviutl2-rs#8824abeb5bef60653eeffda671b06514ee1ab526"
+source = "git+https://github.com/sevenc-nanashi/aviutl2-rs#b420ca57174d114f8ccf05dbb342f6c49fd7358c"
 dependencies = [
  "decimal-rs",
  "either",
@@ -210,7 +209,7 @@ dependencies = [
 [[package]]
 name = "aviutl2-sys"
 version = "0.29.0"
-source = "git+https://github.com/sevenc-nanashi/aviutl2-rs#8824abeb5bef60653eeffda671b06514ee1ab526"
+source = "git+https://github.com/sevenc-nanashi/aviutl2-rs#b420ca57174d114f8ccf05dbb342f6c49fd7358c"
 dependencies = [
  "windows-sys 0.61.2",
 ]
@@ -703,9 +702,9 @@ dependencies = [
 
 [[package]]
 name = "either"
-version = "1.15.0"
+version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
+checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 
 [[package]]
 name = "emath"
@@ -757,6 +756,7 @@ dependencies = [
  "bytemuck",
  "ecolor",
  "emath",
+ "epaint_default_fonts",
  "font-types",
  "log",
  "nohash-hasher",
@@ -768,6 +768,12 @@ dependencies = [
  "smallvec",
  "vello_cpu",
 ]
+
+[[package]]
+name = "epaint_default_fonts"
+version = "0.34.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1644e25dbe3d663fd9c2a4181772c64b23361e377e550c10422ecc3a7de1c3c2"
 
 [[package]]
 name = "equivalent"
@@ -1963,9 +1969,9 @@ dependencies = [
 
 [[package]]
 name = "pastey"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5a797f0e07bdf071d15742978fc3128ec6c22891c31a3a931513263904c982a"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
 name = "peniko"
