@@ -77,7 +77,10 @@ impl KeyframesGui {
         ui.horizontal_wrapped(|ui| {
             for name in &track.names {
                 ui.menu_button(name, |ui| {
-                    if ui.button("分離").clicked() {
+                    if ui
+                        .add_enabled(track.names.len() > 1, egui::Button::new("分離"))
+                        .clicked()
+                    {
                         self.detach_keyframe_track(object, effect, params, track, name);
                     }
                 });
