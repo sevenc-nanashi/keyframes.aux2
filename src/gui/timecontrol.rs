@@ -260,7 +260,7 @@ impl KeyframesGui {
             ui.allocate_painter(available_size, egui::Sense::click_and_drag());
         let mut rect = response.rect.shrink(response.rect.height() * 0.1);
         rect.set_left(rect.left() + rect.height() * 0.1);
-        let (content_min_y, content_max_y) = Self::timecontrol_vertical_bounds(timecontrol);
+        let (content_min_y, content_max_y) = Self::timecontrol_editor_vertical_bounds(timecontrol);
         let content_y_range = (content_max_y - content_min_y).max(0.000_001);
         *vertical_zoom = (*vertical_zoom).clamp(1.0, 8.0);
         let visible_y_range = content_y_range / *vertical_zoom;
@@ -391,6 +391,46 @@ impl KeyframesGui {
         }
 
         (changed, commit_requested)
+    }
+
+    fn timecontrol_editor_vertical_bounds(
+        timecontrol: &crate::keyframe::TimeControl,
+    ) -> (f64, f64) {
+        let mut min_y = 0.0_f64;
+        let mut max_y = 1.0_f64;
+        if let crate::keyframe::TimeControlCurve::Bezier(bezier) = &timecontrol.curve {
+            for point in &bezier.points {
+                for position in [Some(point.position), point.in_handle, point.out_handle]
+                    .into_iter()
+                    .flatten()
+                {
+                    min_y = min_y.min(position[1]);
+                    max_y = max_y.max(position[1]);
+                }
+            }
+        } else if matches!(
+            timecontrol.curve,
+            crate::keyframe::TimeControlCurve::Elastic(_)
+        ) {
+            min_y = 0.0;
+            max_y = 2.0;
+        } else if matches!(
+            timecontrol.curve,
+            crate::keyframe::TimeControlCurve::Bounce(_)
+        ) {
+            min_y = 0.0;
+            max_y = 1.0;
+        } else {
+            for position in timecontrol
+                .curve_sampled_points(96)
+                .into_iter()
+                .chain(timecontrol.editable_vertex())
+            {
+                min_y = min_y.min(position[1]);
+                max_y = max_y.max(position[1]);
+            }
+        }
+        (min_y, max_y)
     }
 
     fn timecontrol_vertical_bounds(timecontrol: &crate::keyframe::TimeControl) -> (f64, f64) {
