@@ -43,8 +43,8 @@ inner_obj.getpoint = function(...)
     if option then
       local remapped_index = indices[option + 1]
       if option < 0 then
-        remapped_index = 0
-      elseif option > #indices then
+        remapped_index = indices[1]
+      elseif option >= #indices then
         remapped_index = indices[#indices]
       end
       return obj.getpoint("time", remapped_index) - obj.getpoint("time", indices[1])
@@ -75,7 +75,7 @@ inner_obj.getpoint = function(...)
     local target_time = option2 or obj.getpoint("time")
     local left_time = obj.getpoint("time", indices[1])
     local right_time = obj.getpoint("time", indices[#indices])
-    ratio = (target_time - left_time) / (right_time - left_time)
+    ratio = target_time / (right_time - left_time)
     local value = mod.get_timecontrol_value(bank_id, keyframe_id, index, ratio)
     if option == "value" then
       return value
