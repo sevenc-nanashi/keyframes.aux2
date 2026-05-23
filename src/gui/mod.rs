@@ -601,6 +601,35 @@ impl KeyframesGui {
             effects.push(effect_info);
         }
 
+        let mut object_name = read.get_object_name(selected_object)?.unwrap_or_else(|| {
+            effects
+                .iter()
+                .find(|e| e.effect_type != EffectType::Control)
+                .map(|e| e.name.clone())
+                .or_else(|| effects.first().map(|e| e.name.clone()))
+                .unwrap_or_else(|| "Unknown Object".to_string())
+        });
+        let output = effects.iter().find(|e| {
+            crate::EFFECTS
+                .get(&e.name)
+                .is_some_and(|e| e.effect_type == aviutl2::generic::EffectType::Output)
+        });
+        if let Some(output) = output {
+            object_name = format!("{} [{}]", object_name, output.name);
+        }
+
+        // 出力制御は上に持っていく
+        effects.sort_by_key(|e| {
+            if crate::EFFECTS
+                .get(&e.name)
+                .is_some_and(|e| e.effect_type == aviutl2::generic::EffectType::Output)
+            {
+                -1
+            } else {
+                1
+            }
+        });
+
         let frames = objects
             .get_value("frame")
             .context("Failed to get frame value")?
@@ -609,14 +638,7 @@ impl KeyframesGui {
             .collect::<Vec<_>>();
         let selected_object_info = SelectedObjectInfo {
             handle: selected_object,
-            name: read.get_object_name(selected_object)?.unwrap_or_else(|| {
-                effects
-                    .iter()
-                    .find(|e| e.effect_type != EffectType::Control)
-                    .map(|e| e.name.clone())
-                    .or_else(|| effects.first().map(|e| e.name.clone()))
-                    .unwrap_or_else(|| "Unknown Object".to_string())
-            }),
+            name: object_name,
             frames,
             effects,
         };

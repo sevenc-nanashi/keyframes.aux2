@@ -14,15 +14,19 @@ impl KeyframesGui {
         if ui
             .add(
                 egui::Label::new(
-                    egui::RichText::new(format!("Selected Object: {}", selected_object_info.name))
-                        .color(
-                            if crate::module::DEBUG_MODE.load(std::sync::atomic::Ordering::Relaxed)
-                            {
-                                GUI_COLORS.log_warn
-                            } else {
-                                GUI_COLORS.text
-                            },
-                        ),
+                    egui::RichText::new(format!(
+                        "{} ({}f - {}f)",
+                        selected_object_info.name,
+                        selected_object_info.frames[0] + 1,
+                        selected_object_info.frames.last().unwrap() + 1
+                    ))
+                    .color(
+                        if crate::module::DEBUG_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+                            GUI_COLORS.log_warn
+                        } else {
+                            GUI_COLORS.text
+                        },
+                    ),
                 )
                 .sense(egui::Sense::click()),
             )
@@ -48,7 +52,7 @@ impl KeyframesGui {
         object: &SelectedObjectInfo,
         effect: &EffectInfo,
     ) {
-        egui::containers::CollapsingHeader::new(format!("Effect: {}", effect.name))
+        egui::containers::CollapsingHeader::new(&effect.name)
             .id_salt((effect.index, &effect.name))
             .enabled(!effect.keyframe_tracks.is_empty())
             .open(effect.keyframe_tracks.is_empty().then_some(false))
@@ -544,23 +548,27 @@ impl KeyframesGui {
         };
         let current_easing = easings.get(&current_keyframe.easing);
 
-        Self::show_midpoint_actions(ui, keyframes, index, current_level, &mut update_keyframe);
-        if let Some(current_easing) = current_easing {
-            self.show_current_easing_options(
-                ui,
-                keyframes,
-                params,
-                object,
-                effect,
-                track,
-                keyframe_index,
-                current_keyframe,
-                current_easing,
-                index,
-                current_level,
-                &mut update_keyframe,
-            );
-        }
+        ui.push_id("midpoint_actions", |ui| {
+            Self::show_midpoint_actions(ui, keyframes, index, current_level, &mut update_keyframe);
+        });
+        ui.push_id("easing_options", |ui| {
+            if let Some(current_easing) = current_easing {
+                self.show_current_easing_options(
+                    ui,
+                    keyframes,
+                    params,
+                    object,
+                    effect,
+                    track,
+                    keyframe_index,
+                    current_keyframe,
+                    current_easing,
+                    index,
+                    current_level,
+                    &mut update_keyframe,
+                );
+            }
+        });
         ui.menu_button("移動方法", |ui| {
             // TODO: ちゃんとlabelごとに階層にする
             egui::containers::ScrollArea::vertical().show(ui, |ui| {
