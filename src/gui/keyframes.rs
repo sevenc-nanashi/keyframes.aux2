@@ -2,7 +2,7 @@
 use super::*;
 use aviutl2_eframe::egui;
 
-static SECTION_SEPARATOR_HITBOX_WEIGHT: f32 = 2.0;
+static SECTION_SEPARATOR_HITBOX_WEIGHT: f32 = 4.0;
 
 impl KeyframesGui {
     pub(super) fn render_selected_object_info(&mut self, ui: &mut egui::Ui) {
@@ -235,6 +235,24 @@ impl KeyframesGui {
                 painter.rect_filled(rect, 0.0, selected_object_color);
             }
 
+            if response.double_clicked()
+                && let crate::keyframe::Keyframe::Easing(ref current_kf_info) =
+                    keyframes.keyframes[section.0]
+                && crate::EASINGS
+                    .get()
+                    .unwrap()
+                    .get(&current_kf_info.easing)
+                    .is_some_and(|easing| easing.has_timecontrol)
+            {
+                self.open_timecontrol_editor(params, object, effect, track, i, kf_info);
+                tracing::info!(
+                    "Opening time control dialog by double click for section {} of track {:?} in effect {:?}",
+                    section.0,
+                    track.names,
+                    effect.name
+                );
+            }
+
             egui::containers::Popup::menu(&response)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| {
@@ -259,6 +277,32 @@ impl KeyframesGui {
                     );
                 });
         }
+    }
+
+    fn open_timecontrol_editor(
+        &mut self,
+        params: &crate::KeyframeTrackParams,
+        object: &SelectedObjectInfo,
+        effect: &EffectInfo,
+        track: &KeyframeTrackInfo,
+        keyframe_index: usize,
+        keyframe: &crate::keyframe::EasingKeyframeInfo,
+    ) {
+        self.timecontrol_editor = Some(TimeControlEditorTarget {
+            params: *params,
+            keyframe_index,
+            object: object.handle,
+            effect_name: effect.name.clone(),
+            effect_index: effect.index,
+            track_names: track.names.clone(),
+            timecontrol: keyframe.timecontrol.clone(),
+            selected_point: 0,
+            context_menu_position: None,
+            vertical_zoom: 1.0,
+            vertical_scroll: 0.5,
+            preset_panel_width: f32::NAN,
+            dirty: false,
+        });
     }
 
     fn section_rect(track_rect: egui::Rect, left: f32, right: f32) -> egui::Rect {
@@ -361,8 +405,19 @@ impl KeyframesGui {
                 continue;
             }
             let easing = match keyframes.keyframes[i] {
-                crate::keyframe::Keyframe::Easing(ref easing) => easing.easing.as_str(),
-                crate::keyframe::Keyframe::Midpoint => "〃",
+                crate::keyframe::Keyframe::Easing(ref easing) => {
+                    if crate::EASINGS
+                        .get()
+                        .unwrap()
+                        .get(&easing.easing)
+                        .is_some_and(|e| e.has_timecontrol)
+                    {
+                        format!("🕒 {}", easing.easing)
+                    } else {
+                        easing.easing.clone()
+                    }
+                }
+                crate::keyframe::Keyframe::Midpoint => "〃".to_string(),
                 _ => continue,
             };
             let left_position = (*frame - object.frames[0]) as f32 / total_frames as f32;
@@ -373,7 +428,7 @@ impl KeyframesGui {
 
             let mut layout = egui::text::LayoutJob::default();
             layout.append(
-                easing,
+                &easing,
                 0.0,
                 egui::TextFormat {
                     font_id: egui::FontId::default(),
@@ -653,21 +708,14 @@ impl KeyframesGui {
         );
         if current_easing.has_timecontrol {
             if ui.button("時間制御").clicked() {
-                self.timecontrol_editor = Some(TimeControlEditorTarget {
-                    params: *params,
+                self.open_timecontrol_editor(
+                    params,
+                    object,
+                    effect,
+                    track,
                     keyframe_index,
-                    object: object.handle,
-                    effect_name: effect.name.clone(),
-                    effect_index: effect.index,
-                    track_names: track.names.clone(),
-                    timecontrol: current_keyframe.timecontrol.clone(),
-                    selected_point: 0,
-                    context_menu_position: None,
-                    vertical_zoom: 1.0,
-                    vertical_scroll: 0.5,
-                    preset_panel_width: f32::NAN,
-                    dirty: false,
-                });
+                    current_keyframe,
+                );
                 ui.close();
                 tracing::info!(
                     "Opening time control dialog for section {} of track {:?} in effect {:?}",
