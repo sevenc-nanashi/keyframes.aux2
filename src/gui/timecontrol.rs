@@ -41,12 +41,12 @@ impl KeyframesGui {
         new_keyframes: crate::keyframe::Keyframes,
     ) -> Option<crate::KeyframeTrackParams> {
         tracing::info!(
-            "Updating time control keyframe {:?} of track {:?} in effect {:?} to {:?}",
+            "Updating time control keyframe {:?} of track {:?} in effect {:?}",
             target.keyframe_index,
             target.track_names,
             target.effect_name,
-            &new_keyframes
         );
+        tracing::debug!("New keyframes: {new_keyframes:?}");
         let new_params = crate::KeyframeTrackParams::new();
         crate::KEYFRAMES.insert(new_params, new_keyframes);
         let edit_result = crate::EDIT_HANDLE
@@ -1556,22 +1556,36 @@ impl KeyframesGui {
         point_index: usize,
     ) {
         let position = timecontrol.points[point_index].position;
-        timecontrol.points[point_index].in_handle = point_index.checked_sub(1).map(|prev_index| {
-            let prev = timecontrol.points[prev_index].position;
-            [
-                position[0] + (prev[0] - position[0]) / 3.0,
-                position[1] + (prev[1] - position[1]) / 3.0,
-            ]
+        let prev = point_index
+            .checked_sub(1)
+            .map(|prev_index| timecontrol.points[prev_index].position);
+        let next = timecontrol
+            .points
+            .get(point_index + 1)
+            .map(|next_point| next_point.position);
+        let tangent = match (prev, next) {
+            (Some(prev), Some(next)) => [next[0] - prev[0], next[1] - prev[1]],
+            (Some(prev), None) => [position[0] - prev[0], position[1] - prev[1]],
+            (None, Some(next)) => [next[0] - position[0], next[1] - position[1]],
+            (None, None) => [1.0, 0.0],
+        };
+        timecontrol.points[point_index].in_handle = prev.map(|prev| {
+            let x = position[0] + (prev[0] - position[0]) / 3.0;
+            Self::timecontrol_point_on_tangent(position, tangent, x)
         });
-        timecontrol.points[point_index].out_handle =
-            timecontrol.points.get(point_index + 1).map(|next_point| {
-                let next = next_point.position;
-                [
-                    position[0] + (next[0] - position[0]) / 3.0,
-                    position[1] + (next[1] - position[1]) / 3.0,
-                ]
-            });
+        timecontrol.points[point_index].out_handle = next.map(|next| {
+            let x = position[0] + (next[0] - position[0]) / 3.0;
+            Self::timecontrol_point_on_tangent(position, tangent, x)
+        });
         timecontrol.points[point_index].handles_separated = false;
+    }
+
+    fn timecontrol_point_on_tangent(origin: [f64; 2], tangent: [f64; 2], x: f64) -> [f64; 2] {
+        if tangent[0].abs() < f64::EPSILON {
+            return [x, origin[1]];
+        }
+        let scale = (x - origin[0]) / tangent[0];
+        [x, origin[1] + tangent[1] * scale]
     }
 
     pub(super) fn update_timecontrol_editor_target(
