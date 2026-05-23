@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 use super::*;
 use anyhow::Context;
 use aviutl2_eframe::egui;
@@ -395,37 +396,9 @@ impl KeyframesGui {
     fn timecontrol_vertical_bounds(timecontrol: &crate::keyframe::TimeControl) -> (f64, f64) {
         let mut min_y = 0.0_f64;
         let mut max_y = 1.0_f64;
-        if let crate::keyframe::TimeControlCurve::Bezier(bezier) = &timecontrol.curve {
-            for point in &bezier.points {
-                for position in [Some(point.position), point.in_handle, point.out_handle]
-                    .into_iter()
-                    .flatten()
-                {
-                    min_y = min_y.min(position[1]);
-                    max_y = max_y.max(position[1]);
-                }
-            }
-        } else if matches!(
-            timecontrol.curve,
-            crate::keyframe::TimeControlCurve::Elastic(_)
-        ) {
-            min_y = 0.0;
-            max_y = 2.0;
-        } else if matches!(
-            timecontrol.curve,
-            crate::keyframe::TimeControlCurve::Bounce(_)
-        ) {
-            min_y = 0.0;
-            max_y = 1.0;
-        } else {
-            for position in timecontrol
-                .curve_sampled_points(96)
-                .into_iter()
-                .chain(timecontrol.editable_vertex())
-            {
-                min_y = min_y.min(position[1]);
-                max_y = max_y.max(position[1]);
-            }
+        for position in timecontrol.sampled_points(96) {
+            min_y = min_y.min(position[1]);
+            max_y = max_y.max(position[1]);
         }
         (min_y, max_y)
     }
@@ -548,92 +521,101 @@ impl KeyframesGui {
         let mut selected = None;
         ui.label("プリセット");
         ui.add_space(4.0);
+        let row_height = 58.0;
+        let available_width = ui.available_width();
+        let spacing = 8.0;
+        let target_width = 200.0;
+        let columns = (((available_width + spacing) / (target_width + spacing))
+            .floor()
+            .max(1.0)) as usize;
+        let preset_width = ((available_width - spacing * ((columns - 1) as f32))
+            / (columns as f32))
+            .max(target_width);
+        let presets = crate::keyframe::timecontrol_presets();
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                let available_width = ui.available_width();
-                let spacing = 8.0;
-                let target_width = 200.0;
-                let columns = ((available_width + spacing) / (target_width + spacing))
-                    .floor()
-                    .max(1.0);
-                let preset_width =
-                    ((available_width - spacing * (columns - 1.0)) / columns).max(target_width);
-                let row_height = 58.0;
-                let presets = crate::keyframe::timecontrol_presets();
-
-                for row in presets.chunks(columns as usize) {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = spacing;
-                        for preset in row {
-                            let (rect, response) = ui.allocate_exact_size(
-                                egui::vec2(preset_width, row_height),
-                                egui::Sense::click(),
-                            );
-                            let hovered = response.hovered();
-                            if hovered {
-                                ui.painter().rect_filled(
-                                    rect,
-                                    4.0,
-                                    GUI_COLORS.object_section.linear_multiply(1.15),
+            .show_rows(
+                ui,
+                row_height,
+                presets.len().div_ceil(columns),
+                |ui, rows| {
+                    for row_index in rows {
+                        let row = presets.iter().skip(row_index * columns).take(columns);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = spacing;
+                            for preset in row {
+                                let (rect, response) = ui.allocate_exact_size(
+                                    egui::vec2(preset_width, row_height),
+                                    egui::Sense::click(),
                                 );
-                            }
+                                let hovered = response.hovered();
+                                if hovered {
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        4.0,
+                                        GUI_COLORS.object_section.linear_multiply(1.15),
+                                    );
+                                }
 
-                            let text_rect = egui::Rect::from_min_max(
-                                rect.left_top() + egui::vec2(6.0, 4.0),
-                                egui::pos2(rect.left() + target_width / 3.0, rect.bottom() - 4.0),
-                            );
-                            let layout = egui::text::LayoutJob::simple(
-                                preset.name.to_string(),
-                                egui::FontId::proportional(13.0),
-                                GUI_COLORS.text,
-                                text_rect.width(),
-                            );
-                            let galley = ui.painter().layout_job(layout);
-                            ui.painter().galley(
-                                text_rect
-                                    .left_center()
-                                    .tap_mut(|pos| pos.y -= galley.size().y / 2.0),
-                                galley,
-                                GUI_COLORS.text,
-                            );
-                            //
-                            // ui.painter().text(
-                            //     text_rect.left_top(),
-                            //     egui::Align2::LEFT_TOP,
-                            //     preset.name,
-                            //     egui::FontId::proportional(13.0),
-                            //     GUI_COLORS.text,
-                            // );
-                            // TODO: 作者とか出したいかも
-                            // ui.painter().text(
-                            //     text_rect.left_bottom(),
-                            //     egui::Align2::LEFT_BOTTOM,
-                            //     preset.category,
-                            //     egui::FontId::proportional(11.0),
-                            //     GUI_COLORS.text.linear_multiply(0.75),
-                            // );
-
-                            let preview_rect = egui::Rect::from_min_max(
-                                egui::pos2(text_rect.right() + 6.0, rect.top() + 6.0),
-                                egui::pos2(rect.right() - 6.0, rect.bottom() - 6.0),
-                            );
-                            if preview_rect.width() > 8.0 && preview_rect.height() > 8.0 {
-                                Self::draw_timecontrol_preset_preview(
-                                    ui.painter(),
-                                    &preset.timecontrol,
-                                    preview_rect,
+                                let text_rect = egui::Rect::from_min_max(
+                                    rect.left_top() + egui::vec2(6.0, 4.0),
+                                    egui::pos2(
+                                        rect.left() + target_width / 3.0,
+                                        rect.bottom() - 4.0,
+                                    ),
                                 );
-                            }
+                                let layout = egui::text::LayoutJob::simple(
+                                    preset.name.to_string(),
+                                    egui::FontId::proportional(13.0),
+                                    GUI_COLORS.text,
+                                    text_rect.width(),
+                                );
+                                let galley = ui.painter().layout_job(layout);
+                                ui.painter().galley(
+                                    text_rect
+                                        .left_center()
+                                        .tap_mut(|pos| pos.y -= galley.size().y / 2.0),
+                                    galley,
+                                    GUI_COLORS.text,
+                                );
+                                //
+                                // ui.painter().text(
+                                //     text_rect.left_top(),
+                                //     egui::Align2::LEFT_TOP,
+                                //     preset.name,
+                                //     egui::FontId::proportional(13.0),
+                                //     GUI_COLORS.text,
+                                // );
+                                // TODO: 作者とか出したいかも
+                                // ui.painter().text(
+                                //     text_rect.left_bottom(),
+                                //     egui::Align2::LEFT_BOTTOM,
+                                //     preset.category,
+                                //     egui::FontId::proportional(11.0),
+                                //     GUI_COLORS.text.linear_multiply(0.75),
+                                // );
 
-                            if response.double_clicked() {
-                                selected = Some(preset.timecontrol.clone());
+                                let preview_rect = egui::Rect::from_min_max(
+                                    egui::pos2(text_rect.right() + 6.0, rect.top() + 6.0),
+                                    egui::pos2(rect.right() - 6.0, rect.bottom() - 6.0),
+                                );
+                                if preview_rect.width() > 8.0 && preview_rect.height() > 8.0 {
+                                    Self::draw_timecontrol_preset_preview(
+                                        ui.painter(),
+                                        &preset.timecontrol,
+                                        preview_rect,
+                                    );
+                                }
+
+                                if response.double_clicked() {
+                                    selected = Some(preset.timecontrol.clone());
+                                }
                             }
-                        }
-                    });
-                    ui.add_space(spacing);
-                }
-            });
+                        });
+                        ui.add_space(spacing);
+                    }
+                },
+            );
         selected
     }
 
