@@ -1,5 +1,8 @@
+#![allow(clippy::too_many_arguments)]
 use super::*;
 use aviutl2_eframe::egui;
+
+static SECTION_SEPARATOR_HITBOX_WEIGHT: f32 = 2.0;
 
 impl KeyframesGui {
     pub(super) fn render_selected_object_info(&mut self, ui: &mut egui::Ui) {
@@ -128,7 +131,16 @@ impl KeyframesGui {
             &keyframes,
             total_frames,
         );
-        self.render_midpoint_lines(&painter, response.rect, object, &keyframes, total_frames);
+        self.render_midpoint_lines(
+            ui,
+            &painter,
+            response.rect,
+            object,
+            effect,
+            track,
+            &keyframes,
+            total_frames,
+        );
         self.render_frame_cursor(&painter, info, object, response.rect, total_frames);
     }
 
@@ -169,7 +181,6 @@ impl KeyframesGui {
         sections
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn render_keyframe_section_interactions(
         &mut self,
         ui: &mut egui::Ui,
@@ -188,7 +199,7 @@ impl KeyframesGui {
         };
         let mut kf_info = initial_kf_info;
 
-        for section in sections {
+        for (i, section) in sections.iter().enumerate() {
             if let crate::keyframe::Keyframe::Easing(ref new_kf_info) =
                 keyframes.keyframes[section.0]
             {
@@ -196,10 +207,20 @@ impl KeyframesGui {
             }
 
             let rect = Self::section_rect(track_rect, section.1, section.2);
+            let shrinked_rect = {
+                let mut rect2 = rect;
+                if i > 0 {
+                    rect2.set_left(rect2.left() + SECTION_SEPARATOR_HITBOX_WEIGHT / 2.0);
+                }
+                if i < sections.len() - 1 {
+                    rect2.set_right(rect2.right() - SECTION_SEPARATOR_HITBOX_WEIGHT / 2.0);
+                }
+                rect2
+            };
             let response = ui
                 .interact(
-                    rect,
-                    ui.id().with(section.0),
+                    shrinked_rect,
+                    ui.id().with("section").with(section.0),
                     aviutl2_eframe::egui::Sense::click(),
                 )
                 .on_hover_text(Self::easing_hover_text(kf_info));
@@ -264,7 +285,7 @@ impl KeyframesGui {
         section_index: usize,
         new_keyframes: crate::keyframe::Keyframes,
     ) -> Option<crate::KeyframeTrackParams> {
-        tracing::info!(
+        tracing::debug!(
             "Updating keyframe {:?} of track {:?} in effect {:?} to {:?}",
             section_index,
             track.names,
@@ -367,9 +388,12 @@ impl KeyframesGui {
 
     fn render_midpoint_lines(
         &self,
+        ui: &mut egui::Ui,
         painter: &egui::Painter,
         track_rect: egui::Rect,
         object: &SelectedObjectInfo,
+        effect: &EffectInfo,
+        track: &KeyframeTrackInfo,
         keyframes: &crate::keyframe::Keyframes,
         total_frames: usize,
     ) {
@@ -381,6 +405,28 @@ impl KeyframesGui {
             let mut rect = track_rect;
             rect.set_left(rect.left() + position * track_rect.width() - 1.0);
             rect.set_right(rect.left() + 1.0);
+            let mut click_rect = rect;
+            click_rect.set_left(click_rect.left() - SECTION_SEPARATOR_HITBOX_WEIGHT / 2.0);
+            click_rect.set_right(click_rect.right() + SECTION_SEPARATOR_HITBOX_WEIGHT / 2.0);
+            let click = ui.interact(
+                click_rect,
+                ui.id().with("separator").with(i),
+                aviutl2_eframe::egui::Sense::click(),
+            );
+            if click.hovered() {
+                painter.rect_filled(click_rect, 0.0, get_colors(&effect.effect_type).1);
+            }
+            if click.clicked() {
+                let mut new_keyframes = keyframes.clone();
+                new_keyframes.keyframes[i] =
+                    if matches!(keyframes.keyframes[i], crate::keyframe::Keyframe::Ignored) {
+                        crate::keyframe::Keyframe::Midpoint
+                    } else {
+                        crate::keyframe::Keyframe::Ignored
+                    };
+                Self::update_track_keyframes(object, effect, track, i, new_keyframes);
+            }
+
             let color = if matches!(keyframes.keyframes[i], crate::keyframe::Keyframe::Ignored) {
                 GUI_COLORS.object_section_ignored
             } else {
@@ -462,7 +508,6 @@ impl KeyframesGui {
         }
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn show_easing_menu(
         &mut self,
         ui: &mut egui::Ui,
@@ -560,7 +605,6 @@ impl KeyframesGui {
         ui.separator();
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn show_current_easing_options(
         &mut self,
         ui: &mut egui::Ui,
