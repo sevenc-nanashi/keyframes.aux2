@@ -1340,7 +1340,7 @@ dependencies = [
 
 [[package]]
 name = "keyframes-aux2"
-version = "0.1.0-preview.5"
+version = "0.1.0-preview.6"
 dependencies = [
  "anyhow",
  "aviutl2",
