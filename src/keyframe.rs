@@ -87,14 +87,14 @@ pub enum TimeControlMode {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TimeControl {
-    pub curve: TimeControlCurve,
+    pub points: Vec<TimeControlPoint>,
     #[serde(default)]
     pub modifier: TimeControlModifier,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum TimeControlCurve {
-    Bezier(TimeControlBezier),
+pub enum TimeControlSegment {
+    Bezier,
     Elastic(TimeControlElastic),
     Bounce(TimeControlBounce),
 }
@@ -109,16 +109,12 @@ pub enum TimeControlModifier {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TimeControlBezier {
-    pub points: Vec<TimeControlBezierPoint>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TimeControlBezierPoint {
+pub struct TimeControlPoint {
     pub position: [f64; 2],
     pub in_handle: Option<[f64; 2]>,
     pub out_handle: Option<[f64; 2]>,
     pub handles_separated: bool,
+    pub outgoing: Option<TimeControlSegment>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -138,10 +134,10 @@ pub struct TimeControlBounce {
 
 impl Default for TimeControl {
     fn default() -> Self {
-        Self {
-            curve: TimeControlCurve::Bezier(TimeControlBezier::default()),
-            modifier: TimeControlModifier::default(),
-        }
+        Self::from_cubic_bezier(
+            TimeControlModifier::default(),
+            [1.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0],
+        )
     }
 }
 
@@ -174,47 +170,15 @@ impl Default for TimeControlBounce {
     }
 }
 
-impl Default for TimeControlBezier {
-    fn default() -> Self {
-        Self {
-            points: vec![
-                TimeControlBezierPoint {
-                    position: [0.0, 0.0],
-                    in_handle: None,
-                    out_handle: Some([1.0 / 3.0, 1.0 / 3.0]),
-                    handles_separated: false,
-                },
-                TimeControlBezierPoint {
-                    position: [1.0, 1.0],
-                    in_handle: Some([2.0 / 3.0, 2.0 / 3.0]),
-                    out_handle: None,
-                    handles_separated: false,
-                },
-            ],
-        }
-    }
-}
-
 impl TimeControl {
     pub fn default_for_mode(mode: TimeControlMode) -> Self {
-        Self {
-            curve: match mode {
-                TimeControlMode::Bezier => TimeControlCurve::Bezier(TimeControlBezier::default()),
-                TimeControlMode::Elastic => {
-                    TimeControlCurve::Elastic(TimeControlElastic::default())
-                }
-                TimeControlMode::Bounce => TimeControlCurve::Bounce(TimeControlBounce::default()),
-            },
-            modifier: TimeControlModifier::default(),
-        }
+        let mut timecontrol = Self::default();
+        timecontrol.points[0].outgoing = Some(TimeControlSegment::default_for_mode(mode));
+        timecontrol
     }
 
     pub fn mode(&self) -> TimeControlMode {
-        match self.curve {
-            TimeControlCurve::Bezier(_) => TimeControlMode::Bezier,
-            TimeControlCurve::Elastic(_) => TimeControlMode::Elastic,
-            TimeControlCurve::Bounce(_) => TimeControlMode::Bounce,
-        }
+        self.segment_mode(0).unwrap_or(TimeControlMode::Bezier)
     }
 
     pub fn y_at_x(&self, x: f64) -> f64 {
@@ -240,35 +204,24 @@ impl TimeControl {
     }
 
     pub fn curve_y_at_x(&self, x: f64) -> f64 {
-        match &self.curve {
-            TimeControlCurve::Bezier(bezier) => bezier.y_at_x(x),
-            TimeControlCurve::Elastic(elastic) => elastic.y_at_x(x),
-            TimeControlCurve::Bounce(bounce) => bounce.y_at_x(x),
-        }
+        let x = x.clamp(0.0, 1.0);
+        let segment_index = self.segment_index_at_x(x);
+        self.segment_y_at_x(segment_index, x)
     }
 
     pub fn curve_sampled_points(&self, steps: usize) -> Vec<[f64; 2]> {
         let steps = steps.max(1);
-        if let TimeControlCurve::Bezier(bezier) = &self.curve {
-            let mut points = Vec::new();
-            for segment_index in 0..bezier.points.len().saturating_sub(1) {
-                if points.is_empty() {
-                    points.push(bezier.points[segment_index].position);
-                }
-                for i in 1..=steps {
-                    let t = i as f64 / steps as f64;
-                    points.push(bezier.segment_point_at(segment_index, t));
-                }
+        let mut points = Vec::new();
+        for segment_index in 0..self.points.len().saturating_sub(1) {
+            if points.is_empty() {
+                points.push(self.points[segment_index].position);
             }
-            points
-        } else {
-            (0..=steps)
-                .map(|i| {
-                    let x = i as f64 / steps as f64;
-                    [x, self.curve_y_at_x(x)]
-                })
-                .collect()
+            for i in 1..=steps {
+                let t = i as f64 / steps as f64;
+                points.push(self.segment_point_at(segment_index, t));
+            }
         }
+        points
     }
 
     pub fn point_at(&self, t: f64) -> [f64; 2] {
@@ -291,47 +244,149 @@ impl TimeControl {
     }
 
     pub fn editable_vertex(&self) -> Option<[f64; 2]> {
-        match &self.curve {
-            TimeControlCurve::Bezier(_) => None,
-            TimeControlCurve::Elastic(_) => None,
-            TimeControlCurve::Bounce(bounce) => Some(bounce.vertex),
-        }
+        self.segment_vertex(0)
     }
 
     pub fn set_editable_vertex(&mut self, vertex: [f64; 2]) {
-        match &mut self.curve {
-            TimeControlCurve::Bezier(_) => {}
-            TimeControlCurve::Elastic(_) => {}
-            TimeControlCurve::Bounce(bounce) => {
-                bounce.vertex = [vertex[0].clamp(0.001, 0.999), vertex[1].clamp(0.0, 1.0)];
-            }
-        }
+        self.set_segment_vertex(0, vertex);
     }
-}
 
-impl TimeControlBezier {
-    pub fn from_cubic_bezier(x1: f64, y1: f64, x2: f64, y2: f64) -> Self {
+    pub fn from_cubic_bezier(modifier: TimeControlModifier, cubic_bezier: [f64; 4]) -> Self {
         Self {
             points: vec![
-                TimeControlBezierPoint {
+                TimeControlPoint {
                     position: [0.0, 0.0],
                     in_handle: None,
-                    out_handle: Some([x1, y1]),
+                    out_handle: Some([cubic_bezier[0], cubic_bezier[1]]),
                     handles_separated: false,
+                    outgoing: Some(TimeControlSegment::Bezier),
                 },
-                TimeControlBezierPoint {
+                TimeControlPoint {
                     position: [1.0, 1.0],
-                    in_handle: Some([x2, y2]),
+                    in_handle: Some([cubic_bezier[2], cubic_bezier[3]]),
                     out_handle: None,
                     handles_separated: false,
+                    outgoing: None,
                 },
             ],
+            modifier,
         }
     }
 
-    pub fn y_at_x(&self, x: f64) -> f64 {
+    pub fn segment_mode(&self, segment_index: usize) -> Option<TimeControlMode> {
+        self.points
+            .get(segment_index)
+            .and_then(|point| point.outgoing.as_ref())
+            .map(TimeControlSegment::mode)
+    }
+
+    pub fn set_segment_mode(&mut self, segment_index: usize, mode: TimeControlMode) {
+        if segment_index + 1 >= self.points.len() {
+            return;
+        }
+        self.points[segment_index].outgoing = Some(TimeControlSegment::default_for_mode(mode));
+        if mode == TimeControlMode::Bezier {
+            self.reset_segment_handles(segment_index);
+        }
+    }
+
+    pub fn segment_vertex(&self, segment_index: usize) -> Option<[f64; 2]> {
+        match self
+            .points
+            .get(segment_index)
+            .and_then(|point| point.outgoing.as_ref())
+        {
+            Some(TimeControlSegment::Bounce(bounce)) => {
+                let start = self.points[segment_index].position;
+                let end = self.points[segment_index + 1].position;
+                Some([
+                    start[0] + (end[0] - start[0]) * bounce.vertex[0],
+                    start[1] + (end[1] - start[1]) * bounce.vertex[1],
+                ])
+            }
+            _ => None,
+        }
+    }
+
+    pub fn set_segment_vertex(&mut self, segment_index: usize, vertex: [f64; 2]) {
+        if segment_index + 1 >= self.points.len() {
+            return;
+        }
+        let start = self.points[segment_index].position;
+        let end = self.points[segment_index + 1].position;
+        let dx = end[0] - start[0];
+        let dy = end[1] - start[1];
+        let local_vertex = [
+            if dx.abs() < f64::EPSILON {
+                0.5
+            } else {
+                (vertex[0] - start[0]) / dx
+            },
+            if dy.abs() < f64::EPSILON {
+                1.0
+            } else {
+                (vertex[1] - start[1]) / dy
+            },
+        ];
+        if let Some(TimeControlSegment::Bounce(bounce)) = self
+            .points
+            .get_mut(segment_index)
+            .and_then(|point| point.outgoing.as_mut())
+        {
+            bounce.vertex = [
+                local_vertex[0].clamp(0.001, 0.999),
+                local_vertex[1].clamp(0.0, 1.0),
+            ];
+        }
+    }
+
+    pub fn segment_elastic(&self, segment_index: usize) -> Option<&TimeControlElastic> {
+        match self
+            .points
+            .get(segment_index)
+            .and_then(|point| point.outgoing.as_ref())
+        {
+            Some(TimeControlSegment::Elastic(elastic)) => Some(elastic),
+            _ => None,
+        }
+    }
+
+    pub fn segment_elastic_mut(&mut self, segment_index: usize) -> Option<&mut TimeControlElastic> {
+        match self
+            .points
+            .get_mut(segment_index)
+            .and_then(|point| point.outgoing.as_mut())
+        {
+            Some(TimeControlSegment::Elastic(elastic)) => Some(elastic),
+            _ => None,
+        }
+    }
+
+    fn segment_y_at_x(&self, segment_index: usize, x: f64) -> f64 {
+        if segment_index + 1 >= self.points.len() {
+            return self
+                .points
+                .last()
+                .map(|point| point.position[1])
+                .unwrap_or(x);
+        }
+        let start = self.points[segment_index].position;
+        let end = self.points[segment_index + 1].position;
+        let local_x = Self::local_x(start, end, x);
+        let local_y = match self.points[segment_index]
+            .outgoing
+            .as_ref()
+            .unwrap_or(&TimeControlSegment::Bezier)
+        {
+            TimeControlSegment::Bezier => self.bezier_segment_y_at_x(segment_index, x),
+            TimeControlSegment::Elastic(elastic) => elastic.y_at_x(local_x),
+            TimeControlSegment::Bounce(bounce) => bounce.y_at_x(local_x),
+        };
+        start[1] + (end[1] - start[1]) * local_y
+    }
+
+    fn bezier_segment_y_at_x(&self, segment_index: usize, x: f64) -> f64 {
         let x = x.clamp(0.0, 1.0);
-        let segment_index = self.segment_index_at_x(x);
         let mut min_t = 0.0;
         let mut max_t = 1.0;
 
@@ -347,26 +402,23 @@ impl TimeControlBezier {
         self.segment_point_at(segment_index, (min_t + max_t) / 2.0)[1]
     }
 
-    pub fn point_at(&self, t: f64) -> [f64; 2] {
-        self.y_point_at_x(t)
-    }
-
-    pub fn y_point_at_x(&self, x: f64) -> [f64; 2] {
-        let x = x.clamp(0.0, 1.0);
-        [x, self.y_at_x(x)]
-    }
-
-    pub fn sampled_points(&self, steps: usize) -> Vec<[f64; 2]> {
-        let steps = steps.max(1);
-        (0..=steps)
-            .map(|i| {
-                let x = i as f64 / steps as f64;
-                [x, self.y_at_x(x)]
-            })
-            .collect()
-    }
-
     pub fn segment_point_at(&self, segment_index: usize, t: f64) -> [f64; 2] {
+        match self
+            .points
+            .get(segment_index)
+            .and_then(|point| point.outgoing.as_ref())
+        {
+            Some(TimeControlSegment::Elastic(elastic)) => {
+                self.function_segment_point_at(segment_index, t, |local_x| elastic.y_at_x(local_x))
+            }
+            Some(TimeControlSegment::Bounce(bounce)) => {
+                self.function_segment_point_at(segment_index, t, |local_x| bounce.y_at_x(local_x))
+            }
+            _ => self.bezier_segment_point_at(segment_index, t),
+        }
+    }
+
+    fn bezier_segment_point_at(&self, segment_index: usize, t: f64) -> [f64; 2] {
         let t = t.clamp(0.0, 1.0);
         let mt = 1.0 - t;
         let segment_index = segment_index.min(self.points.len().saturating_sub(2));
@@ -389,6 +441,22 @@ impl TimeControlBezier {
         ]
     }
 
+    fn function_segment_point_at(
+        &self,
+        segment_index: usize,
+        t: f64,
+        y_at_x: impl Fn(f64) -> f64,
+    ) -> [f64; 2] {
+        let t = t.clamp(0.0, 1.0);
+        let segment_index = segment_index.min(self.points.len().saturating_sub(2));
+        let start = self.points[segment_index].position;
+        let end = self.points[segment_index + 1].position;
+        [
+            start[0] + (end[0] - start[0]) * t,
+            start[1] + (end[1] - start[1]) * y_at_x(t),
+        ]
+    }
+
     pub fn insert_midpoint(&mut self, after_index: usize) -> usize {
         let after_index = after_index.min(self.points.len().saturating_sub(2));
         let x =
@@ -397,7 +465,9 @@ impl TimeControlBezier {
         let prev = self.points[after_index].position;
         let next = self.points[after_index + 1].position;
         let handle_delta = [(next[0] - prev[0]) / 6.0, (next[1] - prev[1]) / 6.0];
-        let new_point = TimeControlBezierPoint {
+        let inherited_outgoing = self.points[after_index].outgoing.clone();
+        self.points[after_index].outgoing = Some(TimeControlSegment::Bezier);
+        let new_point = TimeControlPoint {
             position: [x, y],
             in_handle: Some([
                 (x - handle_delta[0]).clamp(0.0, 1.0),
@@ -408,6 +478,7 @@ impl TimeControlBezier {
                 (y + handle_delta[1]).clamp(0.0, 1.0),
             ]),
             handles_separated: false,
+            outgoing: inherited_outgoing,
         };
         let new_index = after_index + 1;
         self.points.insert(new_index, new_point);
@@ -429,6 +500,49 @@ impl TimeControlBezier {
             .windows(2)
             .position(|points| x <= points[1].position[0])
             .unwrap_or(self.points.len() - 2)
+    }
+
+    fn reset_segment_handles(&mut self, segment_index: usize) {
+        if segment_index + 1 >= self.points.len() {
+            return;
+        }
+        let start = self.points[segment_index].position;
+        let end = self.points[segment_index + 1].position;
+        self.points[segment_index].out_handle = Some([
+            start[0] + (end[0] - start[0]) / 3.0,
+            start[1] + (end[1] - start[1]) / 3.0,
+        ]);
+        self.points[segment_index + 1].in_handle = Some([
+            end[0] - (end[0] - start[0]) / 3.0,
+            end[1] - (end[1] - start[1]) / 3.0,
+        ]);
+    }
+
+    fn local_x(start: [f64; 2], end: [f64; 2], x: f64) -> f64 {
+        let dx = end[0] - start[0];
+        if dx.abs() < f64::EPSILON {
+            0.0
+        } else {
+            ((x - start[0]) / dx).clamp(0.0, 1.0)
+        }
+    }
+}
+
+impl TimeControlSegment {
+    pub fn default_for_mode(mode: TimeControlMode) -> Self {
+        match mode {
+            TimeControlMode::Bezier => Self::Bezier,
+            TimeControlMode::Elastic => Self::Elastic(TimeControlElastic::default()),
+            TimeControlMode::Bounce => Self::Bounce(TimeControlBounce::default()),
+        }
+    }
+
+    pub fn mode(&self) -> TimeControlMode {
+        match self {
+            Self::Bezier => TimeControlMode::Bezier,
+            Self::Elastic(_) => TimeControlMode::Elastic,
+            Self::Bounce(_) => TimeControlMode::Bounce,
+        }
     }
 }
 
@@ -575,34 +689,18 @@ pub fn timecontrol_presets() -> Vec<TimeControlPreset> {
     ) -> TimeControlPreset {
         TimeControlPreset {
             name,
-            timecontrol: TimeControl {
-                curve: TimeControlCurve::Bezier(TimeControlBezier::from_cubic_bezier(
-                    cubic_bezier[0],
-                    cubic_bezier[1],
-                    cubic_bezier[2],
-                    cubic_bezier[3],
-                )),
-                modifier,
-            },
+            timecontrol: TimeControl::from_cubic_bezier(modifier, cubic_bezier),
         }
     }
     fn elastic(name: &'static str, modifier: TimeControlModifier) -> TimeControlPreset {
-        TimeControlPreset {
-            name,
-            timecontrol: TimeControl {
-                curve: TimeControlCurve::Elastic(TimeControlElastic::default()),
-                modifier,
-            },
-        }
+        let mut timecontrol = TimeControl::default_for_mode(TimeControlMode::Elastic);
+        timecontrol.modifier = modifier;
+        TimeControlPreset { name, timecontrol }
     }
     fn bounce(name: &'static str, modifier: TimeControlModifier) -> TimeControlPreset {
-        TimeControlPreset {
-            name,
-            timecontrol: TimeControl {
-                curve: TimeControlCurve::Bounce(TimeControlBounce::default()),
-                modifier,
-            },
-        }
+        let mut timecontrol = TimeControl::default_for_mode(TimeControlMode::Bounce);
+        timecontrol.modifier = modifier;
+        TimeControlPreset { name, timecontrol }
     }
 
     vec![
@@ -897,9 +995,7 @@ mod tests {
     #[test]
     fn elastic_handles_update_parameters() {
         let mut timecontrol = TimeControl::default_for_mode(TimeControlMode::Elastic);
-        let TimeControlCurve::Elastic(elastic) = &mut timecontrol.curve else {
-            unreachable!();
-        };
+        let elastic = timecontrol.segment_elastic_mut(0).unwrap();
 
         elastic.set_amp_handle_y(1.5);
         elastic.set_freq_decay_handle([0.25, 0.5]);
@@ -912,14 +1008,33 @@ mod tests {
     #[test]
     fn bounce_timecontrol_starts_ends_and_passes_vertex() {
         let timecontrol = TimeControl::default_for_mode(TimeControlMode::Bounce);
-        let TimeControlCurve::Bounce(bounce) = &timecontrol.curve else {
-            unreachable!();
-        };
-        let vertex = bounce.vertex;
+        let vertex = timecontrol.editable_vertex().unwrap();
 
         assert!((timecontrol.y_at_x(0.0) - 0.0).abs() < 0.000001);
         assert!((timecontrol.y_at_x(1.0) - 1.0).abs() < 0.000001);
         assert!((timecontrol.y_at_x(vertex[0]) - vertex[1]).abs() < 0.000001);
+    }
+
+    #[test]
+    fn mixed_timecontrol_segments_are_independent() {
+        let mut timecontrol = TimeControl::default();
+        timecontrol.insert_midpoint(0);
+        timecontrol.points[1].position = [0.5, 0.5];
+        timecontrol.set_segment_mode(0, TimeControlMode::Bounce);
+        timecontrol.set_segment_mode(1, TimeControlMode::Elastic);
+        timecontrol.set_segment_vertex(0, [0.25, 0.25]);
+        timecontrol
+            .segment_elastic_mut(1)
+            .unwrap()
+            .set_amp_handle_y(1.5);
+
+        assert_eq!(timecontrol.segment_mode(0), Some(TimeControlMode::Bounce));
+        assert_eq!(timecontrol.segment_mode(1), Some(TimeControlMode::Elastic));
+        assert_eq!(timecontrol.editable_vertex().unwrap(), [0.25, 0.25]);
+        assert!((timecontrol.y_at_x(0.25) - 0.25).abs() < 0.000001);
+        assert!((timecontrol.y_at_x(0.5) - 0.5).abs() < 0.000001);
+        assert!((timecontrol.y_at_x(1.0) - 1.0).abs() < 0.000001);
+        assert!((timecontrol.segment_elastic(1).unwrap().amplitude - 0.5).abs() < 0.000001);
     }
 
     #[test]

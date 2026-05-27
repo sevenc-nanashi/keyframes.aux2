@@ -246,11 +246,7 @@ impl KeyframesGui {
     ) -> (bool, bool) {
         let mut changed = false;
         let mut commit_requested = false;
-        if let crate::keyframe::TimeControlCurve::Bezier(bezier) = &timecontrol.curve {
-            *selected_point = (*selected_point).min(bezier.points.len().saturating_sub(1));
-        } else {
-            *selected_point = 0;
-        }
+        *selected_point = (*selected_point).min(timecontrol.points.len().saturating_sub(1));
 
         let available_size = ui.available_size();
         if available_size.x <= f32::EPSILON || available_size.y <= f32::EPSILON {
@@ -304,8 +300,7 @@ impl KeyframesGui {
                 .map(|pos| viewport.screen_to_graph(pos));
         }
         response.context_menu(|ui| {
-            if Self::show_timecontrol_mode_menu(ui, timecontrol) {
-                *selected_point = 0;
+            if Self::show_timecontrol_segment_mode_menu(ui, timecontrol, *selected_point) {
                 changed = true;
                 commit_requested = true;
             }
@@ -313,11 +308,9 @@ impl KeyframesGui {
                 changed = true;
                 commit_requested = true;
             }
-            if let crate::keyframe::TimeControlCurve::Bezier(bezier) = &mut timecontrol.curve
-                && ui.button("中継点追加").clicked()
-            {
+            if ui.button("中継点追加").clicked() {
                 *selected_point = Self::insert_timecontrol_point(
-                    bezier,
+                    timecontrol,
                     context_menu_position.unwrap_or([0.5, 0.5]),
                 );
                 changed = true;
@@ -329,65 +322,77 @@ impl KeyframesGui {
         Self::draw_timecontrol_grid(&painter, response.rect, viewport);
         Self::draw_timecontrol_curve(&painter, timecontrol, viewport, false);
         Self::draw_timecontrol_modifier_label(&painter, timecontrol, viewport);
-        if let crate::keyframe::TimeControlCurve::Bezier(bezier) = &mut timecontrol.curve {
-            Self::draw_timecontrol_control_lines(&painter, bezier, viewport);
+        Self::draw_timecontrol_control_lines(&painter, timecontrol, viewport);
 
-            let (handle_changed, handle_commit_requested, structure_changed) =
-                Self::show_timecontrol_handles(
-                    ui,
-                    &painter,
-                    bezier,
-                    selected_point,
-                    context_menu_position,
-                    viewport,
-                    vertical_scroll,
-                    movable_y_range,
-                );
-            changed |= handle_changed;
-            commit_requested |= handle_commit_requested;
-            if structure_changed {
-                return (changed, commit_requested);
-            }
-
-            let (anchor_changed, anchor_commit_requested, structure_changed) =
-                Self::show_timecontrol_anchors(
-                    ui,
-                    &painter,
-                    bezier,
-                    selected_point,
-                    context_menu_position,
-                    viewport,
-                    vertical_scroll,
-                    movable_y_range,
-                );
-            changed |= anchor_changed;
-            commit_requested |= anchor_commit_requested;
-            if structure_changed {
-                return (changed, commit_requested);
-            }
-        } else if let crate::keyframe::TimeControlCurve::Elastic(_) = &timecontrol.curve {
-            let (elastic_changed, elastic_commit_requested) =
-                Self::show_timecontrol_elastic_handles(
-                    ui,
-                    &painter,
-                    timecontrol,
-                    viewport,
-                    vertical_scroll,
-                    movable_y_range,
-                );
-            changed |= elastic_changed;
-            commit_requested |= elastic_commit_requested;
-        } else {
-            let (vertex_changed, vertex_commit_requested) = Self::show_timecontrol_vertex(
+        let (handle_changed, handle_commit_requested, structure_changed) =
+            Self::show_timecontrol_handles(
                 ui,
                 &painter,
                 timecontrol,
+                selected_point,
+                context_menu_position,
                 viewport,
                 vertical_scroll,
                 movable_y_range,
             );
-            changed |= vertex_changed;
-            commit_requested |= vertex_commit_requested;
+        changed |= handle_changed;
+        commit_requested |= handle_commit_requested;
+        if structure_changed {
+            return (changed, commit_requested);
+        }
+
+        for segment_index in 0..timecontrol.points.len().saturating_sub(1) {
+            if matches!(
+                timecontrol.segment_mode(segment_index),
+                Some(crate::keyframe::TimeControlMode::Elastic)
+            ) {
+                let (elastic_changed, elastic_commit_requested) =
+                    Self::show_timecontrol_elastic_handles(
+                        ui,
+                        &painter,
+                        timecontrol,
+                        segment_index,
+                        selected_point,
+                        viewport,
+                        vertical_scroll,
+                        movable_y_range,
+                    );
+                changed |= elastic_changed;
+                commit_requested |= elastic_commit_requested;
+            } else if matches!(
+                timecontrol.segment_mode(segment_index),
+                Some(crate::keyframe::TimeControlMode::Bounce)
+            ) {
+                let (vertex_changed, vertex_commit_requested) = Self::show_timecontrol_vertex(
+                    ui,
+                    &painter,
+                    timecontrol,
+                    segment_index,
+                    selected_point,
+                    viewport,
+                    vertical_scroll,
+                    movable_y_range,
+                );
+                changed |= vertex_changed;
+                commit_requested |= vertex_commit_requested;
+            }
+        }
+
+        let (anchor_changed, anchor_commit_requested, structure_changed) =
+            Self::show_timecontrol_anchors(
+                ui,
+                &painter,
+                timecontrol,
+                selected_point,
+                context_menu_position,
+                viewport,
+                vertical_scroll,
+                movable_y_range,
+            );
+        changed |= anchor_changed;
+        commit_requested |= anchor_commit_requested;
+        if structure_changed {
+            return (changed, commit_requested);
         }
 
         (changed, commit_requested)
@@ -398,37 +403,35 @@ impl KeyframesGui {
     ) -> (f64, f64) {
         let mut min_y = 0.0_f64;
         let mut max_y = 1.0_f64;
-        if let crate::keyframe::TimeControlCurve::Bezier(bezier) = &timecontrol.curve {
-            for point in &bezier.points {
-                for position in [Some(point.position), point.in_handle, point.out_handle]
+        for segment_index in 0..timecontrol.points.len().saturating_sub(1) {
+            let start = timecontrol.points[segment_index].position;
+            let end = timecontrol.points[segment_index + 1].position;
+            let (segment_min_y, segment_max_y) = match timecontrol.points[segment_index].outgoing {
+                Some(crate::keyframe::TimeControlSegment::Elastic(_)) => {
+                    let elastic_max_y = start[1] + (end[1] - start[1]) * 2.0;
+                    (start[1].min(elastic_max_y), start[1].max(elastic_max_y))
+                }
+                Some(crate::keyframe::TimeControlSegment::Bounce(_)) => {
+                    (start[1].min(end[1]), start[1].max(end[1]))
+                }
+                _ => {
+                    let mut segment_min_y = start[1].min(end[1]);
+                    let mut segment_max_y = start[1].max(end[1]);
+                    for position in [
+                        timecontrol.points[segment_index].out_handle,
+                        timecontrol.points[segment_index + 1].in_handle,
+                    ]
                     .into_iter()
                     .flatten()
-                {
-                    min_y = min_y.min(position[1]);
-                    max_y = max_y.max(position[1]);
+                    {
+                        segment_min_y = segment_min_y.min(position[1]);
+                        segment_max_y = segment_max_y.max(position[1]);
+                    }
+                    (segment_min_y, segment_max_y)
                 }
-            }
-        } else if matches!(
-            timecontrol.curve,
-            crate::keyframe::TimeControlCurve::Elastic(_)
-        ) {
-            min_y = 0.0;
-            max_y = 2.0;
-        } else if matches!(
-            timecontrol.curve,
-            crate::keyframe::TimeControlCurve::Bounce(_)
-        ) {
-            min_y = 0.0;
-            max_y = 1.0;
-        } else {
-            for position in timecontrol
-                .curve_sampled_points(96)
-                .into_iter()
-                .chain(timecontrol.editable_vertex())
-            {
-                min_y = min_y.min(position[1]);
-                max_y = max_y.max(position[1]);
-            }
+            };
+            min_y = min_y.min(segment_min_y);
+            max_y = max_y.max(segment_max_y);
         }
         (min_y, max_y)
     }
@@ -535,11 +538,16 @@ impl KeyframesGui {
 
     fn draw_timecontrol_control_lines(
         painter: &egui::Painter,
-        timecontrol: &crate::keyframe::TimeControlBezier,
+        timecontrol: &crate::keyframe::TimeControl,
         viewport: TimeControlViewport,
     ) {
         let control_stroke = egui::Stroke::new(1.0, GUI_COLORS.anchor_line);
         for segment_index in 0..timecontrol.points.len().saturating_sub(1) {
+            if timecontrol.segment_mode(segment_index)
+                != Some(crate::keyframe::TimeControlMode::Bezier)
+            {
+                continue;
+            }
             let start = viewport.graph_to_screen(timecontrol.points[segment_index].position);
             let end = viewport.graph_to_screen(timecontrol.points[segment_index + 1].position);
             let out_handle = viewport.graph_to_screen(
@@ -705,7 +713,7 @@ impl KeyframesGui {
     fn show_timecontrol_handles(
         ui: &mut egui::Ui,
         painter: &egui::Painter,
-        timecontrol: &mut crate::keyframe::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControl,
         selected_point: &mut usize,
         context_menu_position: &mut Option<[f64; 2]>,
         viewport: TimeControlViewport,
@@ -718,6 +726,15 @@ impl KeyframesGui {
 
         for point_index in 0..timecontrol.points.len() {
             for handle_kind in [TimeControlHandleKind::In, TimeControlHandleKind::Out] {
+                let handle_segment_index = match handle_kind {
+                    TimeControlHandleKind::In => point_index.checked_sub(1),
+                    TimeControlHandleKind::Out => Some(point_index),
+                };
+                if handle_segment_index.and_then(|index| timecontrol.segment_mode(index))
+                    != Some(crate::keyframe::TimeControlMode::Bezier)
+                {
+                    continue;
+                }
                 let Some(handle) = (match handle_kind {
                     TimeControlHandleKind::In => timecontrol.points[point_index].in_handle,
                     TimeControlHandleKind::Out => timecontrol.points[point_index].out_handle,
@@ -818,7 +835,7 @@ impl KeyframesGui {
     fn show_timecontrol_anchors(
         ui: &mut egui::Ui,
         painter: &egui::Painter,
-        timecontrol: &mut crate::keyframe::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControl,
         selected_point: &mut usize,
         context_menu_position: &mut Option<[f64; 2]>,
         viewport: TimeControlViewport,
@@ -936,28 +953,35 @@ impl KeyframesGui {
         }
     }
 
-    fn show_timecontrol_mode_menu(
+    fn show_timecontrol_segment_mode_menu(
         ui: &mut egui::Ui,
         timecontrol: &mut crate::keyframe::TimeControl,
+        segment_index: usize,
     ) -> bool {
         let mut changed = false;
-        ui.menu_button("モード", |ui| {
-            for (mode, label) in [
-                (crate::keyframe::TimeControlMode::Bezier, "ベジェ"),
-                (crate::keyframe::TimeControlMode::Elastic, "Elastic"),
-                (crate::keyframe::TimeControlMode::Bounce, "Bounce"),
-            ] {
-                if ui
-                    .selectable_label(timecontrol.mode() == mode, label)
-                    .clicked()
-                {
-                    if timecontrol.mode() != mode {
-                        *timecontrol = crate::keyframe::TimeControl::default_for_mode(mode);
-                        changed = true;
+        let can_change = segment_index + 1 < timecontrol.points.len();
+        ui.add_enabled_ui(can_change, |ui| {
+            ui.menu_button("区間方式", |ui| {
+                for (mode, label) in [
+                    (crate::keyframe::TimeControlMode::Bezier, "ベジェ"),
+                    (crate::keyframe::TimeControlMode::Elastic, "Elastic"),
+                    (crate::keyframe::TimeControlMode::Bounce, "Bounce"),
+                ] {
+                    if ui
+                        .selectable_label(
+                            timecontrol.segment_mode(segment_index) == Some(mode),
+                            label,
+                        )
+                        .clicked()
+                    {
+                        if timecontrol.segment_mode(segment_index) != Some(mode) {
+                            timecontrol.set_segment_mode(segment_index, mode);
+                            changed = true;
+                        }
+                        ui.close();
                     }
-                    ui.close();
                 }
-            }
+            });
         });
         changed
     }
@@ -993,21 +1017,25 @@ impl KeyframesGui {
         ui: &mut egui::Ui,
         painter: &egui::Painter,
         timecontrol: &mut crate::keyframe::TimeControl,
+        segment_index: usize,
+        selected_point: &mut usize,
         viewport: TimeControlViewport,
         vertical_scroll: &mut f64,
         movable_y_range: f64,
     ) -> (bool, bool) {
-        let Some(vertex) = timecontrol.editable_vertex() else {
+        let Some(vertex) = timecontrol.segment_vertex(segment_index) else {
             return (false, false);
         };
         let vertex_pos = viewport.graph_to_screen(vertex);
         let vertex_rect = egui::Rect::from_center_size(vertex_pos, egui::Vec2::splat(18.0));
         let response = ui.interact(
             vertex_rect,
-            ui.id()
-                .with(("timecontrol_mode_vertex", timecontrol.mode() as u8)),
+            ui.id().with(("timecontrol_mode_vertex", segment_index)),
             egui::Sense::click_and_drag(),
         );
+        if response.clicked() || response.dragged() {
+            *selected_point = segment_index;
+        }
         let mut changed = false;
         if response.dragged()
             && let Some(pointer_pos) = response.interact_pointer_pos()
@@ -1017,15 +1045,8 @@ impl KeyframesGui {
                 Self::timecontrol_drag_modifiers(ui),
                 Some(vertex[1]),
             );
-            let new_vertex = match timecontrol.mode() {
-                crate::keyframe::TimeControlMode::Bounce => [
-                    new_vertex[0].clamp(0.001, 0.999),
-                    new_vertex[1].clamp(0.0, 1.0),
-                ],
-                _ => [new_vertex[0].clamp(0.001, 0.999), new_vertex[1]],
-            };
-            if Some(new_vertex) != timecontrol.editable_vertex() {
-                timecontrol.set_editable_vertex(new_vertex);
+            if Some(new_vertex) != timecontrol.segment_vertex(segment_index) {
+                timecontrol.set_segment_vertex(segment_index, new_vertex);
                 changed = true;
             }
             Self::scroll_timecontrol_y_for_drag(
@@ -1049,17 +1070,28 @@ impl KeyframesGui {
         ui: &mut egui::Ui,
         painter: &egui::Painter,
         timecontrol: &mut crate::keyframe::TimeControl,
+        segment_index: usize,
+        selected_point: &mut usize,
         viewport: TimeControlViewport,
         vertical_scroll: &mut f64,
         movable_y_range: f64,
     ) -> (bool, bool) {
-        let crate::keyframe::TimeControlCurve::Elastic(elastic) = &mut timecontrol.curve else {
+        if segment_index + 1 >= timecontrol.points.len() {
+            return (false, false);
+        }
+        let start = timecontrol.points[segment_index].position;
+        let end = timecontrol.points[segment_index + 1].position;
+        let Some(elastic) = timecontrol.segment_elastic(segment_index) else {
             return (false, false);
         };
 
         let amp_y = elastic.amp_handle()[1];
-        let amp_handles = [[0.0, amp_y], [1.0, amp_y]];
-        let freq_decay_handle = elastic.freq_decay_handle();
+        let amp_handles = [
+            Self::timecontrol_local_to_graph(start, end, [0.0, amp_y]),
+            Self::timecontrol_local_to_graph(start, end, [1.0, amp_y]),
+        ];
+        let freq_decay_handle =
+            Self::timecontrol_local_to_graph(start, end, elastic.freq_decay_handle());
         let control_stroke = egui::Stroke::new(1.0, GUI_COLORS.anchor_line);
         painter.line_segment(
             [
@@ -1070,7 +1102,11 @@ impl KeyframesGui {
         );
         painter.line_segment(
             [
-                viewport.graph_to_screen([freq_decay_handle[0], 1.0]),
+                viewport.graph_to_screen(Self::timecontrol_local_to_graph(
+                    start,
+                    end,
+                    [elastic.freq_decay_handle()[0], 1.0],
+                )),
                 viewport.graph_to_screen(freq_decay_handle),
             ],
             control_stroke,
@@ -1083,9 +1119,13 @@ impl KeyframesGui {
             let handle_rect = egui::Rect::from_center_size(handle_pos, egui::Vec2::splat(18.0));
             let response = ui.interact(
                 handle_rect,
-                ui.id().with(("timecontrol_elastic_amp", index)),
+                ui.id()
+                    .with(("timecontrol_elastic_amp", segment_index, index)),
                 egui::Sense::click_and_drag(),
             );
+            if response.clicked() || response.dragged() {
+                *selected_point = segment_index;
+            }
             if response.dragged()
                 && let Some(pointer_pos) = response.interact_pointer_pos()
             {
@@ -1094,6 +1134,8 @@ impl KeyframesGui {
                     Self::timecontrol_drag_modifiers(ui),
                     None,
                 );
+                let position = Self::timecontrol_graph_to_local(start, end, position);
+                let elastic = timecontrol.segment_elastic_mut(segment_index).unwrap();
                 let old_amplitude = elastic.amplitude;
                 elastic.set_amp_handle_y(position[1]);
                 changed |= (elastic.amplitude - old_amplitude).abs() > f64::EPSILON;
@@ -1118,9 +1160,13 @@ impl KeyframesGui {
         let handle_rect = egui::Rect::from_center_size(handle_pos, egui::Vec2::splat(18.0));
         let response = ui.interact(
             handle_rect,
-            ui.id().with("timecontrol_elastic_freq_decay"),
+            ui.id()
+                .with(("timecontrol_elastic_freq_decay", segment_index)),
             egui::Sense::click_and_drag(),
         );
+        if response.clicked() || response.dragged() {
+            *selected_point = segment_index;
+        }
         if response.dragged()
             && let Some(pointer_pos) = response.interact_pointer_pos()
         {
@@ -1129,6 +1175,8 @@ impl KeyframesGui {
                 Self::timecontrol_drag_modifiers(ui),
                 None,
             );
+            let position = Self::timecontrol_graph_to_local(start, end, position);
+            let elastic = timecontrol.segment_elastic_mut(segment_index).unwrap();
             let old_frequency = elastic.frequency;
             let old_decay = elastic.decay;
             elastic.set_freq_decay_handle(position);
@@ -1155,7 +1203,7 @@ impl KeyframesGui {
 
     fn show_timecontrol_anchor_menu(
         ui: &mut egui::Ui,
-        timecontrol: &mut crate::keyframe::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControl,
         selected_point: &mut usize,
         add_point_position: [f64; 2],
     ) -> bool {
@@ -1179,13 +1227,15 @@ impl KeyframesGui {
         }
 
         ui.separator();
+        changed |= Self::show_timecontrol_segment_mode_menu(ui, timecontrol, *selected_point);
+        ui.separator();
         changed |= Self::show_timecontrol_handle_menu(ui, timecontrol, selected_point);
 
         changed
     }
 
     fn insert_timecontrol_point(
-        timecontrol: &mut crate::keyframe::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControl,
         position: [f64; 2],
     ) -> usize {
         let x = position[0].clamp(0.0, 1.0);
@@ -1210,7 +1260,7 @@ impl KeyframesGui {
     }
 
     fn remove_timecontrol_point(
-        timecontrol: &mut crate::keyframe::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControl,
         selected_point: &mut usize,
     ) {
         let remove_index = *selected_point;
@@ -1223,7 +1273,7 @@ impl KeyframesGui {
 
     fn show_timecontrol_handle_menu(
         ui: &mut egui::Ui,
-        timecontrol: &mut crate::keyframe::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControl,
         selected_point: &mut usize,
     ) -> bool {
         let mut changed = false;
@@ -1264,7 +1314,7 @@ impl KeyframesGui {
     }
 
     fn clamped_timecontrol_anchor_position(
-        timecontrol: &crate::keyframe::TimeControlBezier,
+        timecontrol: &crate::keyframe::TimeControl,
         point_index: usize,
         position: [f64; 2],
     ) -> [f64; 2] {
@@ -1314,6 +1364,30 @@ impl KeyframesGui {
         position
     }
 
+    fn timecontrol_local_to_graph(start: [f64; 2], end: [f64; 2], position: [f64; 2]) -> [f64; 2] {
+        [
+            start[0] + (end[0] - start[0]) * position[0],
+            start[1] + (end[1] - start[1]) * position[1],
+        ]
+    }
+
+    fn timecontrol_graph_to_local(start: [f64; 2], end: [f64; 2], position: [f64; 2]) -> [f64; 2] {
+        let dx = end[0] - start[0];
+        let dy = end[1] - start[1];
+        [
+            if dx.abs() < f64::EPSILON {
+                0.0
+            } else {
+                (position[0] - start[0]) / dx
+            },
+            if dy.abs() < f64::EPSILON {
+                position[1] - start[1] + 1.0
+            } else {
+                (position[1] - start[1]) / dy
+            },
+        ]
+    }
+
     fn scroll_timecontrol_y_for_drag(
         ui: &egui::Ui,
         vertical_scroll: &mut f64,
@@ -1342,7 +1416,7 @@ impl KeyframesGui {
     }
 
     fn move_timecontrol_anchor(
-        timecontrol: &mut crate::keyframe::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControl,
         point_index: usize,
         position: [f64; 2],
     ) -> bool {
@@ -1401,7 +1475,7 @@ impl KeyframesGui {
     }
 
     fn set_timecontrol_handle(
-        timecontrol: &mut crate::keyframe::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControl,
         point_index: usize,
         handle_kind: TimeControlHandleKind,
         point: [f64; 2],
@@ -1422,7 +1496,7 @@ impl KeyframesGui {
         }
     }
 
-    fn constrain_all_timecontrol_handles(timecontrol: &mut crate::keyframe::TimeControlBezier) {
+    fn constrain_all_timecontrol_handles(timecontrol: &mut crate::keyframe::TimeControl) {
         for point_index in 0..timecontrol.points.len() {
             if let Some(in_handle) = timecontrol.points[point_index].in_handle {
                 timecontrol.points[point_index].in_handle =
@@ -1446,7 +1520,7 @@ impl KeyframesGui {
     }
 
     fn constrain_timecontrol_handle_position(
-        timecontrol: &crate::keyframe::TimeControlBezier,
+        timecontrol: &crate::keyframe::TimeControl,
         point_index: usize,
         handle_kind: TimeControlHandleKind,
         handle: [f64; 2],
@@ -1475,7 +1549,7 @@ impl KeyframesGui {
     }
 
     fn clamped_timecontrol_handle_x(
-        timecontrol: &crate::keyframe::TimeControlBezier,
+        timecontrol: &crate::keyframe::TimeControl,
         point_index: usize,
         handle_kind: TimeControlHandleKind,
         x: f64,
@@ -1508,7 +1582,7 @@ impl KeyframesGui {
     }
 
     fn mirror_timecontrol_handle(
-        timecontrol: &mut crate::keyframe::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControl,
         point_index: usize,
         moved_out_handle: bool,
     ) {
@@ -1552,7 +1626,7 @@ impl KeyframesGui {
     }
 
     fn reset_timecontrol_handles(
-        timecontrol: &mut crate::keyframe::TimeControlBezier,
+        timecontrol: &mut crate::keyframe::TimeControl,
         point_index: usize,
     ) {
         let position = timecontrol.points[point_index].position;
