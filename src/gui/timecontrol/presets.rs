@@ -1,7 +1,7 @@
 use super::*;
 
 impl KeyframesGui {
-    pub(crate) fn show_timecontrol_presets(
+    pub fn show_timecontrol_presets(
         ui: &mut egui::Ui,
     ) -> Option<crate::keyframe::TimeControl> {
         let mut selected = None;
@@ -105,7 +105,7 @@ impl KeyframesGui {
         selected
     }
 
-    pub(crate) fn draw_timecontrol_preset_preview(
+    pub fn draw_timecontrol_preset_preview(
         painter: &egui::Painter,
         timecontrol: &crate::keyframe::TimeControl,
         rect: egui::Rect,
@@ -133,7 +133,7 @@ impl KeyframesGui {
         Self::draw_timecontrol_curve(painter, timecontrol, viewport, true);
     }
 
-    pub(crate) fn draw_timecontrol_modifier_label(
+    pub fn draw_timecontrol_modifier_label(
         painter: &egui::Painter,
         timecontrol: &crate::keyframe::TimeControl,
         viewport: TimeControlViewport,

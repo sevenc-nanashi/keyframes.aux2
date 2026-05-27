@@ -1,7 +1,7 @@
 use super::*;
 
 impl KeyframesGui {
-    pub(crate) fn update_track_keyframes_by_target(
+    pub fn update_track_keyframes_by_target(
         target: &TimeControlEditorTarget,
         new_keyframes: crate::keyframe::Keyframes,
     ) -> Option<crate::KeyframeTrackParams> {

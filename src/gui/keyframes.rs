@@ -5,7 +5,7 @@ use aviutl2_eframe::egui;
 static SECTION_SEPARATOR_HITBOX_WEIGHT: f32 = 4.0;
 
 impl KeyframesGui {
-    pub(super) fn render_selected_object_info(&mut self, ui: &mut egui::Ui) {
+    pub fn render_selected_object_info(&mut self, ui: &mut egui::Ui) {
         let Some(selected_object_info) = self.selected_object_info.clone() else {
             ui.label("No object selected");
             return;

@@ -1,7 +1,7 @@
 use super::*;
 
 impl KeyframesGui {
-    pub(crate) fn show_timecontrol_handles(
+    pub fn show_timecontrol_handles(
         ui: &mut egui::Ui,
         painter: &egui::Painter,
         timecontrol: &mut crate::keyframe::TimeControl,
@@ -123,7 +123,7 @@ impl KeyframesGui {
         (changed, commit_requested, false)
     }
 
-    pub(crate) fn show_timecontrol_anchors(
+    pub fn show_timecontrol_anchors(
         ui: &mut egui::Ui,
         painter: &egui::Painter,
         timecontrol: &mut crate::keyframe::TimeControl,
@@ -207,7 +207,7 @@ impl KeyframesGui {
         (changed, commit_requested, false)
     }
 
-    pub(crate) fn draw_timecontrol_anchor(
+    pub fn draw_timecontrol_anchor(
         painter: &egui::Painter,
         center: egui::Pos2,
         separated_handles: bool,
@@ -234,7 +234,7 @@ impl KeyframesGui {
         }
     }
 
-    pub(crate) fn format_timecontrol_grid_label(value: f64) -> String {
+    pub fn format_timecontrol_grid_label(value: f64) -> String {
         if value.abs() < 0.000_001 {
             "0".to_string()
         } else if (value - value.round()).abs() < 0.000_001 {
@@ -244,7 +244,7 @@ impl KeyframesGui {
         }
     }
 
-    pub(crate) fn show_timecontrol_segment_mode_menu(
+    pub fn show_timecontrol_segment_mode_menu(
         ui: &mut egui::Ui,
         timecontrol: &mut crate::keyframe::TimeControl,
         segment_index: usize,
@@ -277,7 +277,7 @@ impl KeyframesGui {
         changed
     }
 
-    pub(crate) fn show_timecontrol_modifier_menu(
+    pub fn show_timecontrol_modifier_menu(
         ui: &mut egui::Ui,
         timecontrol: &mut crate::keyframe::TimeControl,
     ) -> bool {
@@ -304,7 +304,7 @@ impl KeyframesGui {
         changed
     }
 
-    pub(crate) fn show_timecontrol_vertex(
+    pub fn show_timecontrol_vertex(
         ui: &mut egui::Ui,
         painter: &egui::Painter,
         timecontrol: &mut crate::keyframe::TimeControl,
@@ -357,7 +357,7 @@ impl KeyframesGui {
         (changed, response.drag_stopped())
     }
 
-    pub(crate) fn show_timecontrol_elastic_handles(
+    pub fn show_timecontrol_elastic_handles(
         ui: &mut egui::Ui,
         painter: &egui::Painter,
         timecontrol: &mut crate::keyframe::TimeControl,
@@ -492,7 +492,7 @@ impl KeyframesGui {
         (changed, commit_requested)
     }
 
-    pub(crate) fn show_timecontrol_anchor_menu(
+    pub fn show_timecontrol_anchor_menu(
         ui: &mut egui::Ui,
         timecontrol: &mut crate::keyframe::TimeControl,
         selected_point: &mut usize,
@@ -525,7 +525,7 @@ impl KeyframesGui {
         changed
     }
 
-    pub(crate) fn insert_timecontrol_point(
+    pub fn insert_timecontrol_point(
         timecontrol: &mut crate::keyframe::TimeControl,
         position: [f64; 2],
     ) -> usize {
@@ -550,7 +550,7 @@ impl KeyframesGui {
         new_index
     }
 
-    pub(crate) fn remove_timecontrol_point(
+    pub fn remove_timecontrol_point(
         timecontrol: &mut crate::keyframe::TimeControl,
         selected_point: &mut usize,
     ) {
@@ -562,7 +562,7 @@ impl KeyframesGui {
         Self::constrain_all_timecontrol_handles(timecontrol);
     }
 
-    pub(crate) fn show_timecontrol_handle_menu(
+    pub fn show_timecontrol_handle_menu(
         ui: &mut egui::Ui,
         timecontrol: &mut crate::keyframe::TimeControl,
         selected_point: &mut usize,
@@ -604,7 +604,7 @@ impl KeyframesGui {
         changed
     }
 
-    pub(crate) fn clamped_timecontrol_anchor_position(
+    pub fn clamped_timecontrol_anchor_position(
         timecontrol: &crate::keyframe::TimeControl,
         point_index: usize,
         position: [f64; 2],
@@ -623,9 +623,9 @@ impl KeyframesGui {
         [position[0].clamp(min_x, max_x), position[1]]
     }
 
-    pub(crate) const TIMECONTROL_MIN_ANCHOR_DISTANCE: f64 = 0.001;
+    pub const TIMECONTROL_MIN_ANCHOR_DISTANCE: f64 = 0.001;
 
-    pub(crate) fn snap_timecontrol_position(
+    pub fn snap_timecontrol_position(
         position: [f64; 2],
         step: f64,
     ) -> [f64; 2] {
@@ -635,7 +635,7 @@ impl KeyframesGui {
         ]
     }
 
-    pub(crate) fn timecontrol_drag_modifiers(
+    pub fn timecontrol_drag_modifiers(
         ui: &egui::Ui,
     ) -> TimeControlDragModifiers {
         ui.input(|input| TimeControlDragModifiers {
@@ -644,7 +644,7 @@ impl KeyframesGui {
         })
     }
 
-    pub(crate) fn timecontrol_drag_position(
+    pub fn timecontrol_drag_position(
         mut position: [f64; 2],
         modifiers: TimeControlDragModifiers,
         horizontal_snap_y: Option<f64>,
@@ -660,7 +660,7 @@ impl KeyframesGui {
         position
     }
 
-    pub(crate) fn timecontrol_local_to_graph(
+    pub fn timecontrol_local_to_graph(
         start: [f64; 2],
         end: [f64; 2],
         position: [f64; 2],
@@ -671,7 +671,7 @@ impl KeyframesGui {
         ]
     }
 
-    pub(crate) fn timecontrol_graph_to_local(
+    pub fn timecontrol_graph_to_local(
         start: [f64; 2],
         end: [f64; 2],
         position: [f64; 2],
@@ -692,7 +692,7 @@ impl KeyframesGui {
         ]
     }
 
-    pub(crate) fn scroll_timecontrol_y_for_drag(
+    pub fn scroll_timecontrol_y_for_drag(
         ui: &egui::Ui,
         vertical_scroll: &mut f64,
         viewport: TimeControlViewport,
@@ -719,7 +719,7 @@ impl KeyframesGui {
         ui.ctx().request_repaint();
     }
 
-    pub(crate) fn move_timecontrol_anchor(
+    pub fn move_timecontrol_anchor(
         timecontrol: &mut crate::keyframe::TimeControl,
         point_index: usize,
         position: [f64; 2],
@@ -778,7 +778,7 @@ impl KeyframesGui {
         true
     }
 
-    pub(crate) fn set_timecontrol_handle(
+    pub fn set_timecontrol_handle(
         timecontrol: &mut crate::keyframe::TimeControl,
         point_index: usize,
         handle_kind: TimeControlHandleKind,
@@ -800,7 +800,7 @@ impl KeyframesGui {
         }
     }
 
-    pub(crate) fn constrain_all_timecontrol_handles(
+    pub fn constrain_all_timecontrol_handles(
         timecontrol: &mut crate::keyframe::TimeControl,
     ) {
         for point_index in 0..timecontrol.points.len() {
@@ -825,7 +825,7 @@ impl KeyframesGui {
         }
     }
 
-    pub(crate) fn constrain_timecontrol_handle_position(
+    pub fn constrain_timecontrol_handle_position(
         timecontrol: &crate::keyframe::TimeControl,
         point_index: usize,
         handle_kind: TimeControlHandleKind,
@@ -854,7 +854,7 @@ impl KeyframesGui {
         [x, anchor[1] + delta[1] * scale]
     }
 
-    pub(crate) fn clamped_timecontrol_handle_x(
+    pub fn clamped_timecontrol_handle_x(
         timecontrol: &crate::keyframe::TimeControl,
         point_index: usize,
         handle_kind: TimeControlHandleKind,
@@ -879,7 +879,7 @@ impl KeyframesGui {
         }
     }
 
-    pub(crate) fn clamp_ordered(value: f64, min: f64, max: f64) -> f64 {
+    pub fn clamp_ordered(value: f64, min: f64, max: f64) -> f64 {
         if min <= max {
             value.clamp(min, max)
         } else {
@@ -887,7 +887,7 @@ impl KeyframesGui {
         }
     }
 
-    pub(crate) fn mirror_timecontrol_handle(
+    pub fn mirror_timecontrol_handle(
         timecontrol: &mut crate::keyframe::TimeControl,
         point_index: usize,
         moved_out_handle: bool,
@@ -931,7 +931,7 @@ impl KeyframesGui {
         }
     }
 
-    pub(crate) fn reset_timecontrol_handles(
+    pub fn reset_timecontrol_handles(
         timecontrol: &mut crate::keyframe::TimeControl,
         point_index: usize,
     ) {
@@ -960,7 +960,7 @@ impl KeyframesGui {
         timecontrol.points[point_index].handles_separated = false;
     }
 
-    pub(crate) fn timecontrol_point_on_tangent(
+    pub fn timecontrol_point_on_tangent(
         origin: [f64; 2],
         tangent: [f64; 2],
         x: f64,

@@ -6,30 +6,30 @@ mod keyframes;
 mod timecontrol;
 
 pub struct KeyframesGui {
-    pub(super) selected_object_info: Option<SelectedObjectInfo>,
-    pub(super) timecontrol_editor: Option<TimeControlEditorTarget>,
-    pub(super) debug_counter: usize,
+    pub selected_object_info: Option<SelectedObjectInfo>,
+    pub timecontrol_editor: Option<TimeControlEditorTarget>,
+    pub debug_counter: usize,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct TimeControlEditorTarget {
-    pub(super) params: crate::KeyframeTrackParams,
-    pub(super) keyframe_index: usize,
-    pub(super) object: aviutl2::generic::ObjectHandle,
-    pub(super) effect_name: String,
-    pub(super) effect_index: usize,
-    pub(super) track_names: Vec<String>,
-    pub(super) timecontrol: crate::keyframe::TimeControl,
-    pub(super) selected_point: usize,
-    pub(super) context_menu_position: Option<[f64; 2]>,
-    pub(super) vertical_zoom: f64,
-    pub(super) vertical_scroll: f64,
-    pub(super) preset_panel_width: f32,
-    pub(super) dirty: bool,
+pub struct TimeControlEditorTarget {
+    pub params: crate::KeyframeTrackParams,
+    pub keyframe_index: usize,
+    pub object: aviutl2::generic::ObjectHandle,
+    pub effect_name: String,
+    pub effect_index: usize,
+    pub track_names: Vec<String>,
+    pub timecontrol: crate::keyframe::TimeControl,
+    pub selected_point: usize,
+    pub context_menu_position: Option<[f64; 2]>,
+    pub vertical_zoom: f64,
+    pub vertical_scroll: f64,
+    pub preset_panel_width: f32,
+    pub dirty: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
-enum TimeControlHandleKind {
+pub enum TimeControlHandleKind {
     In,
     Out,
 }
@@ -55,26 +55,26 @@ pub enum EffectType {
 
 #[derive(Debug, Clone)]
 pub struct SelectedObjectInfo {
-    pub(super) handle: aviutl2::generic::ObjectHandle,
-    pub(super) name: String,
-    pub(super) frames: Vec<usize>,
-    pub(super) effects: Vec<EffectInfo>,
+    pub handle: aviutl2::generic::ObjectHandle,
+    pub name: String,
+    pub frames: Vec<usize>,
+    pub effects: Vec<EffectInfo>,
 }
 
 #[derive(Debug, Clone)]
 pub struct EffectInfo {
-    pub(super) name: String,
-    pub(super) index: usize,
-    pub(super) effect_type: EffectType,
-    pub(super) keyframe_tracks: indexmap::IndexMap<crate::KeyframeTrackParams, KeyframeTrackInfo>,
+    pub name: String,
+    pub index: usize,
+    pub effect_type: EffectType,
+    pub keyframe_tracks: indexmap::IndexMap<crate::KeyframeTrackParams, KeyframeTrackInfo>,
 }
 
 #[derive(Debug, Clone)]
 pub struct KeyframeTrackInfo {
-    pub(super) names: Vec<String>,
+    pub names: Vec<String>,
 }
 
-pub(super) struct GuiColors {
+pub struct GuiColors {
     text: egui::Color32,
     log_warn: egui::Color32,
     frame_cursor: egui::Color32,
@@ -96,12 +96,12 @@ pub(super) struct GuiColors {
 }
 
 #[derive(Clone)]
-pub(super) struct ObjectColors {
+pub struct ObjectColors {
     normal: Vec<egui::Color32>,
     selected: egui::Color32,
 }
 
-pub(super) static GUI_COLORS: std::sync::LazyLock<GuiColors> =
+pub static GUI_COLORS: std::sync::LazyLock<GuiColors> =
     std::sync::LazyLock::new(GuiColors::load);
 
 impl GuiColors {
@@ -157,7 +157,7 @@ fn object_colors(normal: &str, selected: &str) -> ObjectColors {
     }
 }
 
-pub(super) fn get_colors(object_type: &EffectType) -> (Vec<egui::Color32>, egui::Color32) {
+pub fn get_colors(object_type: &EffectType) -> (Vec<egui::Color32>, egui::Color32) {
     let colors = match object_type {
         EffectType::Control => &GUI_COLORS.object_control,
         EffectType::VideoInput => &GUI_COLORS.object_video,

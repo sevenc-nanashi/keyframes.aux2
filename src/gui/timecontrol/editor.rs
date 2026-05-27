@@ -1,7 +1,7 @@
 use super::*;
 
 impl KeyframesGui {
-    pub(crate) fn show_timecontrol_bezier_editor(
+    pub fn show_timecontrol_bezier_editor(
         ui: &mut egui::Ui,
         timecontrol: &mut crate::keyframe::TimeControl,
         selected_point: &mut usize,
@@ -163,7 +163,7 @@ impl KeyframesGui {
         (changed, commit_requested)
     }
 
-    pub(crate) fn timecontrol_editor_vertical_bounds(
+    pub fn timecontrol_editor_vertical_bounds(
         timecontrol: &crate::keyframe::TimeControl,
     ) -> (f64, f64) {
         let mut min_y = 0.0_f64;
@@ -201,7 +201,7 @@ impl KeyframesGui {
         (min_y, max_y)
     }
 
-    pub(crate) fn timecontrol_vertical_bounds(
+    pub fn timecontrol_vertical_bounds(
         timecontrol: &crate::keyframe::TimeControl,
     ) -> (f64, f64) {
         let mut min_y = 0.0_f64;

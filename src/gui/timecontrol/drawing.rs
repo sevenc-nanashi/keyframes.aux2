@@ -1,7 +1,7 @@
 use super::*;
 
 impl KeyframesGui {
-    pub(crate) fn draw_timecontrol_grid(
+    pub fn draw_timecontrol_grid(
         painter: &egui::Painter,
         response_rect: egui::Rect,
         viewport: TimeControlViewport,
@@ -68,7 +68,7 @@ impl KeyframesGui {
         );
     }
 
-    pub(crate) fn draw_timecontrol_curve(
+    pub fn draw_timecontrol_curve(
         painter: &egui::Painter,
         timecontrol: &crate::keyframe::TimeControl,
         viewport: TimeControlViewport,
@@ -91,7 +91,7 @@ impl KeyframesGui {
         }
     }
 
-    pub(crate) fn draw_timecontrol_control_lines(
+    pub fn draw_timecontrol_control_lines(
         painter: &egui::Painter,
         timecontrol: &crate::keyframe::TimeControl,
         viewport: TimeControlViewport,
