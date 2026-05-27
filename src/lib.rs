@@ -315,22 +315,20 @@ fn load_effects() -> anyhow::Result<()> {
         files.len()
     );
     for (label, file) in files {
+        let script_bytes = match std::fs::read(&file) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                tracing::warn!("Failed to read easing script file {:?}: {:?}", file, e);
+                continue;
+            }
+        };
         let encoded = if file.extension().and_then(|s| s.to_str()) == Some("tra") {
-            encoding_rs::SHIFT_JIS
-                .decode(&match std::fs::read(&file) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        tracing::warn!("Failed to read easing script file {:?}: {:?}", file, e);
-                        continue;
-                    }
-                })
-                .0
-                .to_string()
+            encoding_rs::SHIFT_JIS.decode(&script_bytes).0.to_string()
         } else {
-            match std::fs::read_to_string(&file) {
+            match String::from_utf8(script_bytes.clone()) {
                 Ok(content) => content,
                 Err(e) => {
-                    tracing::warn!("Failed to read easing script file {:?}: {:?}", file, e);
+                    tracing::warn!("Failed to decode easing script file {:?}: {:?}", file, e);
                     continue;
                 }
             }
@@ -343,7 +341,11 @@ fn load_effects() -> anyhow::Result<()> {
             .to_string_lossy()
             .starts_with('@');
         if file_name_starts_with_at {
-            let scripts = crate::keyframe::Easing::from_multi_script(Some(file.clone()), &encoded);
+            let scripts = crate::keyframe::Easing::from_multi_script_with_bytes(
+                Some(file.clone()),
+                &encoded,
+                &script_bytes,
+            );
             for mut script in scripts {
                 if file_name_starts_with_at {
                     tracing::info!(
@@ -359,8 +361,12 @@ fn load_effects() -> anyhow::Result<()> {
                 easings.push(script);
             }
         } else {
-            let mut easing =
-                crate::keyframe::Easing::from_script(Some(file.clone()), &file_stem, &encoded);
+            let mut easing = crate::keyframe::Easing::from_script_with_bytes(
+                Some(file.clone()),
+                &file_stem,
+                &encoded,
+                &script_bytes,
+            );
             tracing::info!("Loaded easing from script file: {}", file_stem);
             easing.label = easing.label.or_else(|| label.clone());
             easings.push(easing);

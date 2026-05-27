@@ -884,6 +884,7 @@ pub fn timecontrol_presets() -> Vec<TimeControlPreset> {
 pub struct Easing {
     pub name: String,
     pub script: String,
+    pub script_bytes: Vec<u8>,
     pub label: Option<String>,
     pub path: Option<std::path::PathBuf>,
     pub has_speed: bool,
@@ -896,9 +897,19 @@ pub struct Easing {
 
 impl Easing {
     pub fn from_script(path: Option<std::path::PathBuf>, name: &str, script: &str) -> Easing {
+        Self::from_script_with_bytes(path, name, script, script.as_bytes())
+    }
+
+    pub fn from_script_with_bytes(
+        path: Option<std::path::PathBuf>,
+        name: &str,
+        script: &str,
+        script_bytes: &[u8],
+    ) -> Easing {
         let mut easing = Easing {
             name: name.to_string(),
             script: script.to_string(),
+            script_bytes: script_bytes.to_vec(),
             label: None,
             path,
             has_speed: false,
@@ -942,16 +953,35 @@ impl Easing {
 
         easing
     }
+
     pub fn from_multi_script(
         mut path: Option<std::path::PathBuf>,
         multi_script: &str,
     ) -> Vec<Easing> {
+        Self::from_multi_script_with_bytes(path.take(), multi_script, multi_script.as_bytes())
+    }
+
+    pub fn from_multi_script_with_bytes(
+        mut path: Option<std::path::PathBuf>,
+        multi_script: &str,
+        multi_script_bytes: &[u8],
+    ) -> Vec<Easing> {
         let mut current_script: Option<(String, String)> = None;
+        let mut current_script_bytes: Vec<u8> = Vec::new();
         let mut easings = Vec::new();
-        for line in multi_script.lines() {
+        for (line, line_bytes) in multi_script
+            .lines()
+            .zip(Self::script_byte_lines(multi_script_bytes))
+        {
             if let Some(script_name) = line.strip_prefix("@") {
                 if let Some((name, script)) = current_script.take() {
-                    easings.push(Self::from_script(path.clone(), &name, &script));
+                    easings.push(Self::from_script_with_bytes(
+                        path.clone(),
+                        &name,
+                        &script,
+                        &current_script_bytes,
+                    ));
+                    current_script_bytes.clear();
                 }
                 let script_name = script_name.trim();
                 if !script_name.is_empty() {
@@ -960,14 +990,31 @@ impl Easing {
             } else if let Some((_, script)) = &mut current_script {
                 script.push_str(line);
                 script.push('\n');
+                current_script_bytes.extend_from_slice(line_bytes);
+                current_script_bytes.push(b'\n');
             }
         }
 
         if let Some((name, script)) = current_script.take() {
-            easings.push(Self::from_script(path.take(), &name, &script));
+            easings.push(Self::from_script_with_bytes(
+                path.take(),
+                &name,
+                &script,
+                &current_script_bytes,
+            ));
         }
 
         easings
+    }
+
+    fn script_byte_lines(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
+        bytes.split(|b| *b == b'\n').map(|line| {
+            if let Some(line) = line.strip_suffix(b"\r") {
+                line
+            } else {
+                line
+            }
+        })
     }
 }
 

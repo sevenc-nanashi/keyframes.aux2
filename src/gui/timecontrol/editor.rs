@@ -201,9 +201,7 @@ impl KeyframesGui {
         (min_y, max_y)
     }
 
-    pub fn timecontrol_vertical_bounds(
-        timecontrol: &crate::keyframe::TimeControl,
-    ) -> (f64, f64) {
+    pub fn timecontrol_vertical_bounds(timecontrol: &crate::keyframe::TimeControl) -> (f64, f64) {
         let mut min_y = 0.0_f64;
         let mut max_y = 1.0_f64;
         for position in timecontrol.sampled_points(96) {

@@ -625,19 +625,14 @@ impl KeyframesGui {
 
     pub const TIMECONTROL_MIN_ANCHOR_DISTANCE: f64 = 0.001;
 
-    pub fn snap_timecontrol_position(
-        position: [f64; 2],
-        step: f64,
-    ) -> [f64; 2] {
+    pub fn snap_timecontrol_position(position: [f64; 2], step: f64) -> [f64; 2] {
         [
             (position[0] / step).round() * step,
             (position[1] / step).round() * step,
         ]
     }
 
-    pub fn timecontrol_drag_modifiers(
-        ui: &egui::Ui,
-    ) -> TimeControlDragModifiers {
+    pub fn timecontrol_drag_modifiers(ui: &egui::Ui) -> TimeControlDragModifiers {
         ui.input(|input| TimeControlDragModifiers {
             shift: input.modifiers.shift,
             alt: input.modifiers.alt,
@@ -800,9 +795,7 @@ impl KeyframesGui {
         }
     }
 
-    pub fn constrain_all_timecontrol_handles(
-        timecontrol: &mut crate::keyframe::TimeControl,
-    ) {
+    pub fn constrain_all_timecontrol_handles(timecontrol: &mut crate::keyframe::TimeControl) {
         for point_index in 0..timecontrol.points.len() {
             if let Some(in_handle) = timecontrol.points[point_index].in_handle {
                 timecontrol.points[point_index].in_handle =
@@ -960,11 +953,7 @@ impl KeyframesGui {
         timecontrol.points[point_index].handles_separated = false;
     }
 
-    pub fn timecontrol_point_on_tangent(
-        origin: [f64; 2],
-        tangent: [f64; 2],
-        x: f64,
-    ) -> [f64; 2] {
+    pub fn timecontrol_point_on_tangent(origin: [f64; 2], tangent: [f64; 2], x: f64) -> [f64; 2] {
         if tangent[0].abs() < f64::EPSILON {
             return [x, origin[1]];
         }

@@ -2,6 +2,7 @@
 --param:Keyframe ID (Do not edit manually),0
 
 local mod = obj.module("keyframes.aux2")
+local ffi = require("ffi")
 local bank_id, keyframe_id = obj.getpoint("param")
 local index, ratio = math.modf(obj.getpoint("index"))
 local inspect = mod.debug_mode()
@@ -16,8 +17,8 @@ if bank_id == 0 then
   return left + (right - left) * ratio
 end
 
-local indices, script_name, script, script_dir, accelerate, decelerate, params = mod.get_keyframe(bank_id, keyframe_id,
-  index)
+local indices, script_name, script_ptr, script_len, script_dir, accelerate, decelerate, params = mod.get_keyframe(
+  bank_id, keyframe_id, index)
 
 local inner_G = {}
 local inner_obj = {}
@@ -152,6 +153,7 @@ if SCRIPT_CACHE[script_name] then
   f = SCRIPT_CACHE[script_name]
 else
   local err
+  local script = ffi.string(script_ptr, script_len)
   f, err = loadstring(script, script_name)
   if not f then
     error("Failed to load keyframe script: " .. err)

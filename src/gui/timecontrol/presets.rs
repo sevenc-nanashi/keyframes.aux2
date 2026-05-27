@@ -1,9 +1,7 @@
 use super::*;
 
 impl KeyframesGui {
-    pub fn show_timecontrol_presets(
-        ui: &mut egui::Ui,
-    ) -> Option<crate::keyframe::TimeControl> {
+    pub fn show_timecontrol_presets(ui: &mut egui::Ui) -> Option<crate::keyframe::TimeControl> {
         let mut selected = None;
         ui.label("プリセット");
         ui.add_space(4.0);

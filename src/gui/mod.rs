@@ -101,8 +101,7 @@ pub struct ObjectColors {
     selected: egui::Color32,
 }
 
-pub static GUI_COLORS: std::sync::LazyLock<GuiColors> =
-    std::sync::LazyLock::new(GuiColors::load);
+pub static GUI_COLORS: std::sync::LazyLock<GuiColors> = std::sync::LazyLock::new(GuiColors::load);
 
 impl GuiColors {
     fn load() -> Self {
