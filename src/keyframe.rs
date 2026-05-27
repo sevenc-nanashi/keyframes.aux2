@@ -467,8 +467,6 @@ impl TimeControl {
         let prev = self.points[after_index].position;
         let next = self.points[after_index + 1].position;
         let handle_delta = [(next[0] - prev[0]) / 6.0, (next[1] - prev[1]) / 6.0];
-        let inherited_outgoing = self.points[after_index].outgoing.clone();
-        self.points[after_index].outgoing = Some(TimeControlSegment::Bezier);
         let new_point = TimeControlPoint {
             position: [x, y],
             in_handle: Some([
@@ -480,7 +478,7 @@ impl TimeControl {
                 (y + handle_delta[1]).clamp(0.0, 1.0),
             ]),
             handles_separated: false,
-            outgoing: inherited_outgoing,
+            outgoing: Some(TimeControlSegment::Bezier),
         };
         let new_index = after_index + 1;
         self.points.insert(new_index, new_point);
@@ -1221,6 +1219,24 @@ mod tests {
         assert!((timecontrol.y_at_x(0.5) - 0.5).abs() < 0.000001);
         assert!((timecontrol.y_at_x(1.0) - 1.0).abs() < 0.000001);
         assert!((timecontrol.segment_elastic(1).unwrap().amplitude - 0.5).abs() < 0.000001);
+    }
+
+    #[test]
+    fn inserting_midpoint_keeps_existing_curve_on_left_and_makes_right_bezier() {
+        let mut timecontrol = TimeControl::default_for_mode(TimeControlMode::Elastic);
+        timecontrol.segment_elastic_mut(0).unwrap().reversed = true;
+        timecontrol
+            .segment_elastic_mut(0)
+            .unwrap()
+            .set_amp_handle_y(1.5);
+
+        let new_index = timecontrol.insert_midpoint(0);
+
+        assert_eq!(new_index, 1);
+        assert_eq!(timecontrol.segment_mode(0), Some(TimeControlMode::Elastic));
+        assert_eq!(timecontrol.segment_mode(1), Some(TimeControlMode::Bezier));
+        assert!(timecontrol.segment_elastic(0).unwrap().reversed);
+        assert!((timecontrol.segment_elastic(0).unwrap().amplitude - 0.5).abs() < 0.000001);
     }
 
     #[test]

@@ -84,8 +84,8 @@ impl KeyframesGui {
         Self::draw_timecontrol_curve(&painter, timecontrol, viewport, false);
         Self::draw_timecontrol_control_lines(&painter, timecontrol, viewport);
 
-        let (handle_changed, handle_commit_requested, structure_changed) =
-            Self::show_timecontrol_handles(
+        let (anchor_changed, anchor_commit_requested, structure_changed) =
+            Self::show_timecontrol_anchors(
                 ui,
                 &painter,
                 timecontrol,
@@ -95,8 +95,8 @@ impl KeyframesGui {
                 vertical_scroll,
                 movable_y_range,
             );
-        changed |= handle_changed;
-        commit_requested |= handle_commit_requested;
+        changed |= anchor_changed;
+        commit_requested |= anchor_commit_requested;
         if structure_changed {
             return (changed, commit_requested);
         }
@@ -138,8 +138,8 @@ impl KeyframesGui {
             }
         }
 
-        let (anchor_changed, anchor_commit_requested, structure_changed) =
-            Self::show_timecontrol_anchors(
+        let (handle_changed, handle_commit_requested, structure_changed) =
+            Self::show_timecontrol_handles(
                 ui,
                 &painter,
                 timecontrol,
@@ -149,8 +149,8 @@ impl KeyframesGui {
                 vertical_scroll,
                 movable_y_range,
             );
-        changed |= anchor_changed;
-        commit_requested |= anchor_commit_requested;
+        changed |= handle_changed;
+        commit_requested |= handle_commit_requested;
         if structure_changed {
             return (changed, commit_requested);
         }
