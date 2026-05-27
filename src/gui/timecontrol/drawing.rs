@@ -72,10 +72,10 @@ impl KeyframesGui {
         painter: &egui::Painter,
         timecontrol: &crate::keyframe::TimeControl,
         viewport: TimeControlViewport,
-        apply_modifier: bool,
+        sample_final_curve: bool,
     ) {
         let curve_stroke = egui::Stroke::new(2.0, GUI_COLORS.zoom_gauge);
-        let points = if apply_modifier {
+        let points = if sample_final_curve {
             timecontrol.sampled_points(96)
         } else {
             timecontrol.curve_sampled_points(96)

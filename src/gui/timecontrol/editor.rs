@@ -69,10 +69,6 @@ impl KeyframesGui {
                 changed = true;
                 commit_requested = true;
             }
-            if Self::show_timecontrol_modifier_menu(ui, timecontrol) {
-                changed = true;
-                commit_requested = true;
-            }
             if ui.button("中継点追加").clicked() {
                 *selected_point = Self::insert_timecontrol_point(
                     timecontrol,
@@ -86,7 +82,6 @@ impl KeyframesGui {
 
         Self::draw_timecontrol_grid(&painter, response.rect, viewport);
         Self::draw_timecontrol_curve(&painter, timecontrol, viewport, false);
-        Self::draw_timecontrol_modifier_label(&painter, timecontrol, viewport);
         Self::draw_timecontrol_control_lines(&painter, timecontrol, viewport);
 
         let (handle_changed, handle_commit_requested, structure_changed) =
@@ -171,30 +166,37 @@ impl KeyframesGui {
         for segment_index in 0..timecontrol.points.len().saturating_sub(1) {
             let start = timecontrol.points[segment_index].position;
             let end = timecontrol.points[segment_index + 1].position;
-            let (segment_min_y, segment_max_y) = match timecontrol.points[segment_index].outgoing {
-                Some(crate::keyframe::TimeControlSegment::Elastic(_)) => {
-                    let elastic_max_y = start[1] + (end[1] - start[1]) * 2.0;
-                    (start[1].min(elastic_max_y), start[1].max(elastic_max_y))
-                }
-                Some(crate::keyframe::TimeControlSegment::Bounce(_)) => {
-                    (start[1].min(end[1]), start[1].max(end[1]))
-                }
-                _ => {
-                    let mut segment_min_y = start[1].min(end[1]);
-                    let mut segment_max_y = start[1].max(end[1]);
-                    for position in [
-                        timecontrol.points[segment_index].out_handle,
-                        timecontrol.points[segment_index + 1].in_handle,
-                    ]
-                    .into_iter()
-                    .flatten()
-                    {
-                        segment_min_y = segment_min_y.min(position[1]);
-                        segment_max_y = segment_max_y.max(position[1]);
+            let (segment_min_y, segment_max_y) =
+                match timecontrol.points[segment_index].outgoing.as_ref() {
+                    Some(crate::keyframe::TimeControlSegment::Elastic(elastic)) => {
+                        let local_min_y = if elastic.reversed { -1.0 } else { 0.0 };
+                        let local_max_y = if elastic.reversed { 1.0 } else { 2.0 };
+                        let elastic_min_y = start[1] + (end[1] - start[1]) * local_min_y;
+                        let elastic_max_y = start[1] + (end[1] - start[1]) * local_max_y;
+                        (
+                            elastic_min_y.min(elastic_max_y),
+                            elastic_min_y.max(elastic_max_y),
+                        )
                     }
-                    (segment_min_y, segment_max_y)
-                }
-            };
+                    Some(crate::keyframe::TimeControlSegment::Bounce(_)) => {
+                        (start[1].min(end[1]), start[1].max(end[1]))
+                    }
+                    _ => {
+                        let mut segment_min_y = start[1].min(end[1]);
+                        let mut segment_max_y = start[1].max(end[1]);
+                        for position in [
+                            timecontrol.points[segment_index].out_handle,
+                            timecontrol.points[segment_index + 1].in_handle,
+                        ]
+                        .into_iter()
+                        .flatten()
+                        {
+                            segment_min_y = segment_min_y.min(position[1]);
+                            segment_max_y = segment_max_y.max(position[1]);
+                        }
+                        (segment_min_y, segment_max_y)
+                    }
+                };
             min_y = min_y.min(segment_min_y);
             max_y = max_y.max(segment_max_y);
         }

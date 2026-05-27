@@ -277,30 +277,22 @@ impl KeyframesGui {
         changed
     }
 
-    pub fn show_timecontrol_modifier_menu(
+    pub fn show_timecontrol_segment_reverse_menu(
         ui: &mut egui::Ui,
         timecontrol: &mut crate::keyframe::TimeControl,
+        segment_index: usize,
     ) -> bool {
         let mut changed = false;
-        ui.menu_button("加工", |ui| {
-            for modifier in [
-                crate::keyframe::TimeControlModifier::Normal,
-                crate::keyframe::TimeControlModifier::Reverse,
-                crate::keyframe::TimeControlModifier::NormalReverse,
-                crate::keyframe::TimeControlModifier::ReverseNormal,
-            ] {
-                if ui
-                    .selectable_label(timecontrol.modifier == modifier, modifier.label())
-                    .clicked()
-                {
-                    if timecontrol.modifier != modifier {
-                        timecontrol.modifier = modifier;
-                        changed = true;
-                    }
-                    ui.close();
-                }
+        let Some(mut reversed) = timecontrol.segment_reversed(segment_index) else {
+            return false;
+        };
+        if ui.checkbox(&mut reversed, "反転").changed() {
+            if timecontrol.segment_reversed(segment_index) != Some(reversed) {
+                timecontrol.set_segment_reversed(segment_index, reversed);
+                changed = true;
             }
-        });
+            ui.close();
+        }
         changed
     }
 
@@ -375,14 +367,24 @@ impl KeyframesGui {
         let Some(elastic) = timecontrol.segment_elastic(segment_index) else {
             return (false, false);
         };
+        let display_local = |point: [f64; 2]| {
+            if elastic.reversed {
+                [1.0 - point[0], 1.0 - point[1]]
+            } else {
+                point
+            }
+        };
 
         let amp_y = elastic.amp_handle()[1];
         let amp_handles = [
-            Self::timecontrol_local_to_graph(start, end, [0.0, amp_y]),
-            Self::timecontrol_local_to_graph(start, end, [1.0, amp_y]),
+            Self::timecontrol_local_to_graph(start, end, display_local([0.0, amp_y])),
+            Self::timecontrol_local_to_graph(start, end, display_local([1.0, amp_y])),
         ];
-        let freq_decay_handle =
-            Self::timecontrol_local_to_graph(start, end, elastic.freq_decay_handle());
+        let freq_decay_handle = Self::timecontrol_local_to_graph(
+            start,
+            end,
+            display_local(elastic.freq_decay_handle()),
+        );
         let control_stroke = egui::Stroke::new(1.0, GUI_COLORS.anchor_line);
         painter.line_segment(
             [
@@ -396,7 +398,7 @@ impl KeyframesGui {
                 viewport.graph_to_screen(Self::timecontrol_local_to_graph(
                     start,
                     end,
-                    [elastic.freq_decay_handle()[0], 1.0],
+                    display_local([elastic.freq_decay_handle()[0], 1.0]),
                 )),
                 viewport.graph_to_screen(freq_decay_handle),
             ],
@@ -425,7 +427,13 @@ impl KeyframesGui {
                     Self::timecontrol_drag_modifiers(ui),
                     None,
                 );
-                let position = Self::timecontrol_graph_to_local(start, end, position);
+                let mut position = Self::timecontrol_graph_to_local(start, end, position);
+                if timecontrol
+                    .segment_elastic(segment_index)
+                    .is_some_and(|elastic| elastic.reversed)
+                {
+                    position = [1.0 - position[0], 1.0 - position[1]];
+                }
                 let elastic = timecontrol.segment_elastic_mut(segment_index).unwrap();
                 let old_amplitude = elastic.amplitude;
                 elastic.set_amp_handle_y(position[1]);
@@ -466,7 +474,13 @@ impl KeyframesGui {
                 Self::timecontrol_drag_modifiers(ui),
                 None,
             );
-            let position = Self::timecontrol_graph_to_local(start, end, position);
+            let mut position = Self::timecontrol_graph_to_local(start, end, position);
+            if timecontrol
+                .segment_elastic(segment_index)
+                .is_some_and(|elastic| elastic.reversed)
+            {
+                position = [1.0 - position[0], 1.0 - position[1]];
+            }
             let elastic = timecontrol.segment_elastic_mut(segment_index).unwrap();
             let old_frequency = elastic.frequency;
             let old_decay = elastic.decay;
@@ -519,6 +533,7 @@ impl KeyframesGui {
 
         ui.separator();
         changed |= Self::show_timecontrol_segment_mode_menu(ui, timecontrol, *selected_point);
+        changed |= Self::show_timecontrol_segment_reverse_menu(ui, timecontrol, *selected_point);
         ui.separator();
         changed |= Self::show_timecontrol_handle_menu(ui, timecontrol, selected_point);
 

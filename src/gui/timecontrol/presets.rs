@@ -130,19 +130,4 @@ impl KeyframesGui {
         }
         Self::draw_timecontrol_curve(painter, timecontrol, viewport, true);
     }
-
-    pub fn draw_timecontrol_modifier_label(
-        painter: &egui::Painter,
-        timecontrol: &crate::keyframe::TimeControl,
-        viewport: TimeControlViewport,
-    ) {
-        let pos = viewport.graph_to_screen([1.0, 0.0]) + egui::vec2(-6.0, -6.0);
-        painter.text(
-            pos,
-            egui::Align2::RIGHT_BOTTOM,
-            timecontrol.modifier.label(),
-            egui::FontId::proportional(12.0),
-            GUI_COLORS.text.linear_multiply(0.45),
-        );
-    }
 }
