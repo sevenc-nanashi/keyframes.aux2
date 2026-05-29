@@ -77,8 +77,6 @@ impl KeyframesGui {
             return;
         }
 
-        target.vertical_zoom = target.vertical_zoom.clamp(1.0, 8.0);
-        target.vertical_scroll = target.vertical_scroll.clamp(0.0, 1.0);
         let content_size = ui.available_size();
         let total_width = content_size.x;
         let content_height = content_size.y;
@@ -116,8 +114,8 @@ impl KeyframesGui {
                 &mut target.timecontrol,
                 &mut target.selected_point,
                 &mut target.context_menu_position,
-                &mut target.vertical_zoom,
-                &mut target.vertical_scroll,
+                &mut target.visible_y_bounds,
+                &mut target.drag_scroll_y_bounds,
             );
         }
 
@@ -150,8 +148,8 @@ impl KeyframesGui {
                 target.timecontrol = timecontrol;
                 target.selected_point = 0;
                 target.context_menu_position = None;
-                target.vertical_zoom = 1.0;
-                target.vertical_scroll = 0.0;
+                target.visible_y_bounds = None;
+                target.drag_scroll_y_bounds = None;
                 result.0 = true;
                 result.1 = true;
             }

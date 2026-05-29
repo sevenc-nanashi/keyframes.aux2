@@ -6,8 +6,8 @@ impl KeyframesGui {
         timecontrol: &mut crate::keyframe::TimeControl,
         selected_point: &mut usize,
         context_menu_position: &mut Option<[f64; 2]>,
-        vertical_zoom: &mut f64,
-        vertical_scroll: &mut f64,
+        visible_y_bounds: &mut Option<TimeControlVerticalBounds>,
+        drag_scroll_y_bounds: &mut Option<TimeControlVerticalBounds>,
     ) -> (bool, bool) {
         let mut changed = false;
         let mut commit_requested = false;
@@ -22,42 +22,73 @@ impl KeyframesGui {
         let mut rect = response.rect.shrink(response.rect.height() * 0.1);
         rect.set_left(rect.left() + rect.height() * 0.1);
         let (content_min_y, content_max_y) = Self::timecontrol_editor_vertical_bounds(timecontrol);
-        let content_y_range = (content_max_y - content_min_y).max(0.000_001);
-        *vertical_zoom = (*vertical_zoom).clamp(1.0, 8.0);
-        let visible_y_range = content_y_range / *vertical_zoom;
-        let (scroll_min_y, scroll_max_y) = if content_y_range >= visible_y_range {
-            (content_min_y, content_max_y - visible_y_range)
-        } else {
-            (content_max_y - visible_y_range, content_min_y)
+        let actual_vertical_bounds = TimeControlVerticalBounds {
+            min_y: content_min_y,
+            max_y: content_max_y,
         };
-        let movable_y_range = scroll_max_y - scroll_min_y;
-        if response.hovered() {
-            let (scroll_delta, zoom_delta, ctrl) = ui.input(|i| {
+        let vertical_bounds = if ui.ctx().dragged_id().is_some() {
+            let drag_bounds = drag_scroll_y_bounds.get_or_insert(actual_vertical_bounds);
+            *drag_bounds = drag_bounds.union(actual_vertical_bounds);
+            *drag_bounds
+        } else {
+            *drag_scroll_y_bounds = None;
+            actual_vertical_bounds
+        };
+        let mut current_visible_y_bounds = visible_y_bounds
+            .unwrap_or(vertical_bounds)
+            .clamp_to_content(vertical_bounds);
+        let pointer_pos = ui.input(|i| i.pointer.hover_pos());
+        if pointer_pos.is_some_and(|pos| response.rect.contains(pos)) {
+            let (scroll_delta, zoom_delta, ctrl, pointer_pos) = ui.input(|i| {
                 (
                     i.smooth_scroll_delta().y as f64,
                     i.zoom_delta() as f64,
                     i.modifiers.ctrl,
+                    i.pointer.hover_pos(),
                 )
             });
             if ctrl {
-                if (zoom_delta - 1.0).abs() > f64::EPSILON {
-                    *vertical_zoom = (*vertical_zoom * zoom_delta).clamp(1.0, 8.0);
+                let zoom_factor = if (zoom_delta - 1.0).abs() > f64::EPSILON {
+                    zoom_delta
                 } else if scroll_delta.abs() > f64::EPSILON {
-                    *vertical_zoom = (*vertical_zoom * (scroll_delta * 0.01).exp()).clamp(1.0, 8.0);
+                    (scroll_delta * 0.01).exp()
+                } else {
+                    1.0
+                };
+                if (zoom_factor - 1.0).abs() > f64::EPSILON {
+                    let range = current_visible_y_bounds.y_range() / zoom_factor;
+                    current_visible_y_bounds = if let Some(pointer_pos) = pointer_pos {
+                        let anchor_ratio = ((rect.bottom() - pointer_pos.y) / rect.height())
+                            .clamp(0.0, 1.0) as f64;
+                        let anchor_y = current_visible_y_bounds.min_y
+                            + current_visible_y_bounds.y_range() * anchor_ratio;
+                        TimeControlVerticalBounds::with_anchor_and_range(
+                            anchor_y,
+                            anchor_ratio,
+                            range,
+                        )
+                    } else {
+                        TimeControlVerticalBounds::with_center_and_range(
+                            current_visible_y_bounds.center(),
+                            range,
+                        )
+                    }
+                    .clamp_to_content(vertical_bounds);
                 }
-            } else if scroll_delta.abs() > f64::EPSILON
-                && rect.height() > f32::EPSILON
-                && movable_y_range > f64::EPSILON
-            {
-                let scroll_ratio =
-                    scroll_delta / rect.height() as f64 * visible_y_range / movable_y_range;
-                *vertical_scroll = (*vertical_scroll + scroll_ratio).clamp(0.0, 1.0);
+            } else if scroll_delta.abs() > f64::EPSILON && rect.height() > f32::EPSILON {
+                let scroll_y =
+                    scroll_delta / rect.height() as f64 * current_visible_y_bounds.y_range();
+                current_visible_y_bounds = current_visible_y_bounds
+                    .translate(scroll_y)
+                    .clamp_to_content(vertical_bounds);
             }
         }
-        *vertical_scroll = (*vertical_scroll).clamp(0.0, 1.0);
-        let min_y = scroll_min_y + movable_y_range * *vertical_scroll;
-        let max_y = min_y + visible_y_range;
-        let viewport = TimeControlViewport { rect, min_y, max_y };
+        *visible_y_bounds = Some(current_visible_y_bounds);
+        let viewport = TimeControlViewport {
+            rect,
+            min_y: current_visible_y_bounds.min_y,
+            max_y: current_visible_y_bounds.max_y,
+        };
 
         if response.secondary_clicked() {
             *context_menu_position = response
@@ -92,8 +123,8 @@ impl KeyframesGui {
                 selected_point,
                 context_menu_position,
                 viewport,
-                vertical_scroll,
-                movable_y_range,
+                visible_y_bounds,
+                vertical_bounds,
             );
         changed |= anchor_changed;
         commit_requested |= anchor_commit_requested;
@@ -114,8 +145,8 @@ impl KeyframesGui {
                         segment_index,
                         selected_point,
                         viewport,
-                        vertical_scroll,
-                        movable_y_range,
+                        visible_y_bounds,
+                        vertical_bounds,
                     );
                 changed |= elastic_changed;
                 commit_requested |= elastic_commit_requested;
@@ -130,8 +161,8 @@ impl KeyframesGui {
                     segment_index,
                     selected_point,
                     viewport,
-                    vertical_scroll,
-                    movable_y_range,
+                    visible_y_bounds,
+                    vertical_bounds,
                 );
                 changed |= vertex_changed;
                 commit_requested |= vertex_commit_requested;
@@ -146,8 +177,8 @@ impl KeyframesGui {
                 selected_point,
                 context_menu_position,
                 viewport,
-                vertical_scroll,
-                movable_y_range,
+                visible_y_bounds,
+                vertical_bounds,
             );
         changed |= handle_changed;
         commit_requested |= handle_commit_requested;

@@ -22,10 +22,73 @@ pub struct TimeControlEditorTarget {
     pub timecontrol: crate::keyframe::TimeControl,
     pub selected_point: usize,
     pub context_menu_position: Option<[f64; 2]>,
-    pub vertical_zoom: f64,
-    pub vertical_scroll: f64,
     pub preset_panel_width: f32,
+    pub visible_y_bounds: Option<TimeControlVerticalBounds>,
+    pub drag_scroll_y_bounds: Option<TimeControlVerticalBounds>,
     pub dirty: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TimeControlVerticalBounds {
+    pub min_y: f64,
+    pub max_y: f64,
+}
+
+impl TimeControlVerticalBounds {
+    fn y_range(self) -> f64 {
+        self.max_y - self.min_y
+    }
+
+    fn center(self) -> f64 {
+        (self.min_y + self.max_y) / 2.0
+    }
+
+    fn translate(self, delta: f64) -> Self {
+        Self {
+            min_y: self.min_y + delta,
+            max_y: self.max_y + delta,
+        }
+    }
+
+    fn union(self, other: Self) -> Self {
+        Self {
+            min_y: self.min_y.min(other.min_y),
+            max_y: self.max_y.max(other.max_y),
+        }
+    }
+
+    fn with_center_and_range(center: f64, range: f64) -> Self {
+        let half_range = range / 2.0;
+        Self {
+            min_y: center - half_range,
+            max_y: center + half_range,
+        }
+    }
+
+    fn with_anchor_and_range(anchor_y: f64, anchor_ratio: f64, range: f64) -> Self {
+        let min_y = anchor_y - anchor_ratio * range;
+        Self {
+            min_y,
+            max_y: min_y + range,
+        }
+    }
+
+    fn clamp_to_content(self, content: Self) -> Self {
+        let content_range = content.y_range().max(0.000_001);
+        let range = self.y_range().clamp(content_range / 8.0, content_range);
+        if range >= content_range {
+            return content;
+        }
+
+        let mut bounds = Self::with_center_and_range(self.center(), range);
+        if bounds.min_y < content.min_y {
+            bounds = bounds.translate(content.min_y - bounds.min_y);
+        }
+        if bounds.max_y > content.max_y {
+            bounds = bounds.translate(content.max_y - bounds.max_y);
+        }
+        bounds
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

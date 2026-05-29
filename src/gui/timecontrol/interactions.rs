@@ -8,8 +8,8 @@ impl KeyframesGui {
         selected_point: &mut usize,
         context_menu_position: &mut Option<[f64; 2]>,
         viewport: TimeControlViewport,
-        vertical_scroll: &mut f64,
-        movable_y_range: f64,
+        visible_y_bounds: &mut Option<TimeControlVerticalBounds>,
+        vertical_bounds: TimeControlVerticalBounds,
     ) -> (bool, bool, bool) {
         let mut changed = false;
         let mut commit_requested = false;
@@ -83,9 +83,9 @@ impl KeyframesGui {
                     }
                     Self::scroll_timecontrol_y_for_drag(
                         ui,
-                        vertical_scroll,
+                        visible_y_bounds,
                         viewport,
-                        movable_y_range,
+                        vertical_bounds,
                         pointer_pos,
                     );
                 }
@@ -130,8 +130,8 @@ impl KeyframesGui {
         selected_point: &mut usize,
         context_menu_position: &mut Option<[f64; 2]>,
         viewport: TimeControlViewport,
-        vertical_scroll: &mut f64,
-        movable_y_range: f64,
+        visible_y_bounds: &mut Option<TimeControlVerticalBounds>,
+        vertical_bounds: TimeControlVerticalBounds,
     ) -> (bool, bool, bool) {
         let mut changed = false;
         let mut commit_requested = false;
@@ -166,9 +166,9 @@ impl KeyframesGui {
                 }
                 Self::scroll_timecontrol_y_for_drag(
                     ui,
-                    vertical_scroll,
+                    visible_y_bounds,
                     viewport,
-                    movable_y_range,
+                    vertical_bounds,
                     pointer_pos,
                 );
             }
@@ -303,8 +303,8 @@ impl KeyframesGui {
         segment_index: usize,
         selected_point: &mut usize,
         viewport: TimeControlViewport,
-        vertical_scroll: &mut f64,
-        movable_y_range: f64,
+        visible_y_bounds: &mut Option<TimeControlVerticalBounds>,
+        vertical_bounds: TimeControlVerticalBounds,
     ) -> (bool, bool) {
         let Some(vertex) = timecontrol.segment_vertex(segment_index) else {
             return (false, false);
@@ -334,9 +334,9 @@ impl KeyframesGui {
             }
             Self::scroll_timecontrol_y_for_drag(
                 ui,
-                vertical_scroll,
+                visible_y_bounds,
                 viewport,
-                movable_y_range,
+                vertical_bounds,
                 pointer_pos,
             );
         }
@@ -356,8 +356,8 @@ impl KeyframesGui {
         segment_index: usize,
         selected_point: &mut usize,
         viewport: TimeControlViewport,
-        vertical_scroll: &mut f64,
-        movable_y_range: f64,
+        visible_y_bounds: &mut Option<TimeControlVerticalBounds>,
+        vertical_bounds: TimeControlVerticalBounds,
     ) -> (bool, bool) {
         if segment_index + 1 >= timecontrol.points.len() {
             return (false, false);
@@ -440,9 +440,9 @@ impl KeyframesGui {
                 changed |= (elastic.amplitude - old_amplitude).abs() > f64::EPSILON;
                 Self::scroll_timecontrol_y_for_drag(
                     ui,
-                    vertical_scroll,
+                    visible_y_bounds,
                     viewport,
-                    movable_y_range,
+                    vertical_bounds,
                     pointer_pos,
                 );
             }
@@ -489,9 +489,9 @@ impl KeyframesGui {
                 || (elastic.decay - old_decay).abs() > f64::EPSILON;
             Self::scroll_timecontrol_y_for_drag(
                 ui,
-                vertical_scroll,
+                visible_y_bounds,
                 viewport,
-                movable_y_range,
+                vertical_bounds,
                 pointer_pos,
             );
         }
@@ -704,12 +704,12 @@ impl KeyframesGui {
 
     pub fn scroll_timecontrol_y_for_drag(
         ui: &egui::Ui,
-        vertical_scroll: &mut f64,
+        visible_y_bounds: &mut Option<TimeControlVerticalBounds>,
         viewport: TimeControlViewport,
-        movable_y_range: f64,
+        vertical_bounds: TimeControlVerticalBounds,
         pointer_pos: egui::Pos2,
     ) {
-        if viewport.rect.height() <= f32::EPSILON || movable_y_range <= f64::EPSILON {
+        if viewport.rect.height() <= f32::EPSILON {
             return;
         }
 
@@ -725,7 +725,14 @@ impl KeyframesGui {
         let scroll_y = overflow as f64 / viewport.rect.height() as f64 * visible_y_range;
         let max_scroll_y = visible_y_range * 0.1;
         let scroll_y = scroll_y.clamp(-max_scroll_y, max_scroll_y);
-        *vertical_scroll = (*vertical_scroll + scroll_y / movable_y_range).clamp(0.0, 1.0);
+        *visible_y_bounds = Some(
+            TimeControlVerticalBounds {
+                min_y: viewport.min_y,
+                max_y: viewport.max_y,
+            }
+            .translate(scroll_y)
+            .clamp_to_content(vertical_bounds),
+        );
         ui.ctx().request_repaint();
     }
 

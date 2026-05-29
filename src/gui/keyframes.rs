@@ -298,9 +298,9 @@ impl KeyframesGui {
             timecontrol: keyframe.timecontrol.clone(),
             selected_point: 0,
             context_menu_position: None,
-            vertical_zoom: 1.0,
-            vertical_scroll: 0.5,
             preset_panel_width: f32::NAN,
+            visible_y_bounds: None,
+            drag_scroll_y_bounds: None,
             dirty: false,
         });
     }
