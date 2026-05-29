@@ -12,10 +12,10 @@ impl KeyframesGui {
             target.effect_name,
         );
         tracing::debug!("New keyframes: {new_keyframes:?}");
-        let new_params = crate::KeyframeTrackParams::new();
-        crate::KEYFRAMES.insert(new_params, new_keyframes);
-        let edit_result = crate::EDIT_HANDLE
+        let new_params = crate::EDIT_HANDLE
             .call_edit_section(|edit| {
+                let new_params = crate::KeyframeTrackParams::new(edit.info.scene_id);
+                crate::KEYFRAMES.insert(new_params, new_keyframes);
                 for name in &target.track_names {
                     let mut before = edit.get_object_effect_item(
                         target.object,
@@ -32,12 +32,12 @@ impl KeyframesGui {
                         &before,
                     )?;
                 }
-                anyhow::Ok(())
+                anyhow::Ok(new_params)
             })
             .map_err(anyhow::Error::from)
             .flatten();
-        match edit_result {
-            Ok(()) => Some(new_params),
+        match new_params {
+            Ok(new_params) => Some(new_params),
             Err(e) => {
                 tracing::error!(
                     "Failed to update time control keyframe {:?} of track {:?} in effect {:?}: {:?}",

@@ -13,6 +13,12 @@ struct KeyframesAux2 {
     gui: aviutl2_eframe::EframeWindow,
 }
 
+#[derive(Debug, Clone)]
+pub struct CurrentSceneUsageInfo {
+    pub bank_ids: std::collections::HashSet<usize>,
+    pub params: Vec<KeyframeTrackParams>,
+}
+
 pub static EFFECTS: std::sync::LazyLock<dashmap::DashMap<String, aviutl2::generic::Effect>> =
     std::sync::LazyLock::new(dashmap::DashMap::new);
 pub static EASINGS: std::sync::OnceLock<indexmap::IndexMap<String, crate::keyframe::Easing>> =
@@ -29,29 +35,35 @@ pub static CURRENT_BANK: std::sync::LazyLock<std::sync::Mutex<usize>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(1));
 pub static CURRENT_KEYFRAMES_ID: std::sync::LazyLock<std::sync::Mutex<usize>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(0));
-pub static SHUTTING_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static CURRENT_SCENE_USAGE: std::sync::LazyLock<std::sync::Mutex<CurrentSceneUsageInfo>> =
+    std::sync::LazyLock::new(|| {
+        std::sync::Mutex::new(CurrentSceneUsageInfo {
+            bank_ids: std::collections::HashSet::new(),
+            params: vec![],
+        })
+    });
+pub static PROCESS_NONCE: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| rand::random_range(1..32768));
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct KeyframeTrackParams {
     pub bank_id: usize,
     pub keyframes_id: usize,
+    pub scene_id: i32,
+    pub process_nonce: usize,
 }
 
 impl KeyframeTrackParams {
-    pub fn new() -> Self {
+    pub fn new(scene_id: i32) -> Self {
         let current_bank_id = CURRENT_BANK.lock().unwrap();
         let mut current_keyframes_id = CURRENT_KEYFRAMES_ID.lock().unwrap();
         let params = Self {
             bank_id: *current_bank_id,
             keyframes_id: *current_keyframes_id,
+            scene_id,
+            process_nonce: *PROCESS_NONCE,
         };
         *current_keyframes_id += 1;
         params
-    }
-}
-
-impl Default for KeyframeTrackParams {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -66,14 +78,18 @@ pub struct KeyframeBinding {
 impl KeyframeTrackParams {
     pub fn parse(alias: &str) -> Option<Self> {
         static KEYFRAME_PATTERN: lazy_regex::Lazy<lazy_regex::regex::Regex> = lazy_regex::lazy_regex!(
-            r",keyframes\.aux2,\d+\|(?<bank_id>\d+),(?<keyframes_id>\d+)(?:$|\|)"
+            r",keyframes\.aux2,\d+\|(?<bank_id>\d+),(?<keyframes_id>\d+),(?<scene_id>\d+),(?<process_nonce>\d+)(?:$|\|)"
         );
         let captures = KEYFRAME_PATTERN.captures(alias)?;
         let bank_id: usize = captures.name("bank_id")?.as_str().parse().ok()?;
         let keyframes_id: usize = captures.name("keyframes_id")?.as_str().parse().ok()?;
+        let scene_id: i32 = captures.name("scene_id")?.as_str().parse().ok()?;
+        let process_nonce: usize = captures.name("process_nonce")?.as_str().parse().ok()?;
         Some(Self {
             bank_id,
             keyframes_id,
+            scene_id,
+            process_nonce,
         })
     }
     pub fn set_params(&self, track: &mut String) -> anyhow::Result<()> {
@@ -81,8 +97,8 @@ impl KeyframeTrackParams {
             lazy_regex::lazy_regex!(r"^[0-9\.]+$");
         if STATIC_VALUE_PATTERN.is_match(track) {
             track.replace_with(&format!(
-                "{},{},keyframes.aux2,0|{},{}|",
-                track, track, self.bank_id, self.keyframes_id
+                "{},{},keyframes.aux2,0|{},{},{},{}",
+                track, track, self.bank_id, self.keyframes_id, self.scene_id, self.process_nonce
             ));
             return Ok(());
         }
@@ -94,11 +110,21 @@ impl KeyframeTrackParams {
         let flags = captures.name("flags").unwrap();
         let rest = captures.name("rest").unwrap();
         let new_alias = format!(
-            "keyframes.aux2,{}|{},{}{}",
+            "keyframes.aux2,{}|{},{},{},{}{}",
             flags.as_str(),
             self.bank_id,
             self.keyframes_id,
-            rest.as_str()
+            self.scene_id,
+            self.process_nonce,
+            if let Some(params) = rest.as_str().strip_prefix('|') {
+                if let Some((_old_params, expr)) = params.split_once('|') {
+                    format!("|{expr}")
+                } else {
+                    format!("|{params}")
+                }
+            } else {
+                "".to_string()
+            }
         );
         let start = captures.get(0).unwrap().start();
         let end = captures.get(0).unwrap().end();
@@ -206,24 +232,12 @@ impl aviutl2::generic::GenericPlugin for KeyframesAux2 {
     }
 }
 
-impl Drop for KeyframesAux2 {
-    fn drop(&mut self) {
-        // UninitializePlugin中に別スレッドからEDIT_HANDLEを使うと死ぬので、ここでフラグを立てておく
-        // もっともこれですべての処理を回避できるわけではない（タイミング的な問題）が、まぁある程度はマシになるはず...
-        // 本来はAviUtl2はUninitializePluginを呼び終わるまでEDIT_HANDLEが有効であるべき
-        SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
 fn clear_unused_keyframes(info: &aviutl2::generic::EditInfo, read: &aviutl2::generic::ReadSection) {
-    let mut used_bank_ids = std::collections::HashSet::new();
     let mut used_keyframes = std::collections::HashSet::new();
     for layer_index in 0..=info.layer_max {
         let layer = read.layer(layer_index);
         for (position, object) in layer.objects() {
-            if let Err(e) =
-                collect_used_keyframes(read, object, &mut used_bank_ids, &mut used_keyframes)
-            {
+            if let Err(e) = collect_used_keyframes(read, object, &mut used_keyframes) {
                 tracing::error!(
                     "Failed to collect used keyframes for object at position {:?} in layer {:?}: {:?}",
                     position,
@@ -233,12 +247,11 @@ fn clear_unused_keyframes(info: &aviutl2::generic::EditInfo, read: &aviutl2::gen
             }
         }
     }
-    tracing::info!("Used bank IDs: {:?}", used_bank_ids);
     let before_len = KEYFRAMES.len();
     let current_bank_id = *CURRENT_BANK.lock().unwrap();
     KEYFRAMES.retain(|params, _| {
-        !used_bank_ids.contains(&params.bank_id)
-            || params.bank_id == current_bank_id
+        params.bank_id == current_bank_id
+            || params.scene_id != info.scene_id
             || used_keyframes.contains(params)
     });
     tracing::info!("Removed {} unused keyframes", before_len - KEYFRAMES.len());
@@ -408,7 +421,6 @@ fn load_effects() -> anyhow::Result<()> {
 fn collect_used_keyframes(
     edit: &aviutl2::generic::ReadSection,
     object: aviutl2::generic::ObjectHandle,
-    used_bank_ids: &mut std::collections::HashSet<usize>,
     used_keyframes: &mut std::collections::HashSet<KeyframeTrackParams>,
 ) -> anyhow::Result<()> {
     let alias = edit
@@ -431,7 +443,6 @@ fn collect_used_keyframes(
             let Some(params) = crate::KeyframeTrackParams::parse(value) else {
                 return;
             };
-            used_bank_ids.insert(params.bank_id);
             used_keyframes.insert(params);
         })?;
     }
@@ -439,3 +450,57 @@ fn collect_used_keyframes(
 }
 
 aviutl2::register_generic_plugin!(KeyframesAux2);
+
+#[cfg(test)]
+mod tests {
+    use crate::KeyframeTrackParams;
+
+    #[test]
+    fn test_keyframe_track_params_parse() {
+        let alias = "0,2,keyframes.aux2,0|1,2,3,4";
+        let params = KeyframeTrackParams::parse(alias).unwrap();
+        assert_eq!(params.bank_id, 1);
+        assert_eq!(params.keyframes_id, 2);
+        assert_eq!(params.scene_id, 3);
+        assert_eq!(params.process_nonce, 4);
+    }
+
+    #[test]
+    fn test_keyframe_track_params_set_params_static() {
+        let mut track = "0.5".to_string();
+        let params = KeyframeTrackParams {
+            bank_id: 1,
+            keyframes_id: 2,
+            scene_id: 3,
+            process_nonce: 4,
+        };
+        params.set_params(&mut track).unwrap();
+        assert_eq!(track, "0.5,0.5,keyframes.aux2,0|1,2,3,4");
+    }
+
+    #[test]
+    fn test_keyframe_track_params_set_params_keyframe_no_params() {
+        let mut track = "0,0,easeInOutSine,8|test".to_string();
+        let params = KeyframeTrackParams {
+            bank_id: 1,
+            keyframes_id: 2,
+            scene_id: 3,
+            process_nonce: 4,
+        };
+        params.set_params(&mut track).unwrap();
+        assert_eq!(track, "0,0,keyframes.aux2,8|1,2,3,4|test");
+    }
+
+    #[test]
+    fn test_keyframe_track_params_set_params_keyframe_with_params() {
+        let mut track = "0,0,easeInOutSine,8|1,2|test".to_string();
+        let params = KeyframeTrackParams {
+            bank_id: 1,
+            keyframes_id: 2,
+            scene_id: 3,
+            process_nonce: 4,
+        };
+        params.set_params(&mut track).unwrap();
+        assert_eq!(track, "0,0,keyframes.aux2,8|1,2,3,4|test");
+    }
+}

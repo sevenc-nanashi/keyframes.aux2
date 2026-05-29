@@ -190,9 +190,7 @@ static RESOLVED_MIGRATIONS: std::sync::LazyLock<
 
 impl aviutl2_eframe::eframe::App for KeyframesGui {
     fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if crate::EDIT_HANDLE.is_ready()
-            && !crate::SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst)
-        {
+        if crate::EDIT_HANDLE.is_ready() {
             if !crate::EDIT_HANDLE
                 .get_edit_state()
                 .is_ok_and(|state| state == aviutl2::generic::EditState::Edit)
@@ -210,66 +208,10 @@ impl aviutl2_eframe::eframe::App for KeyframesGui {
                     return;
                 }
             };
-            if !change_bindings.is_empty() {
-                tracing::info!(
-                    "Updating keyframe track params for {} bindings",
-                    change_bindings.len()
-                );
-                let update_result = crate::EDIT_HANDLE
-                    .call_edit_section(|edit| {
-                        let mut resolved_migrations = RESOLVED_MIGRATIONS.lock().unwrap();
-                        for (binding, new_params) in change_bindings {
-                            tracing::info!(
-                                "Updating keyframe track params for object {:?}, effect {:?} (index {}), track {:?} to {:?}",
-                                binding.object,
-                                binding.effect_name,
-                                binding.effect_index,
-                                binding.track_name,
-                                new_params
-                            );
-                            let mut track = edit.get_object_effect_item(
-                                binding.object,
-                                &binding.effect_name,
-                                binding.effect_index,
-                                &binding.track_name,
-                            )?;
-                            tracing::debug!(
-                                "Current keyframe track params for object {:?}, effect {:?} (index {}), track {:?}: {:?}",
-                                binding.object,
-                                binding.effect_name,
-                                binding.effect_index,
-                                binding.track_name,
-                                &track
-                            );
-                            let previous_params = crate::KeyframeTrackParams::parse(&track);
-                            if let Some(previous_params) = previous_params && previous_params.bank_id != 0 {
-                                resolved_migrations.insert(previous_params);
-                            }
-                            new_params.set_params(&mut track)?;
-                            edit.set_object_effect_item(
-                                binding.object,
-                                &binding.effect_name,
-                                binding.effect_index,
-                                &binding.track_name,
-                                &track,
-                            )?;
-                            tracing::debug!(
-                                "Updated keyframe track params for object {:?}, effect {:?} (index {}), track {:?} to {:?}",
-                                binding.object,
-                                binding.effect_name,
-                                binding.effect_index,
-                                binding.track_name,
-                                &track
-                            );
-                        }
-                        anyhow::Ok(())
-                    })
-                    .map_err(anyhow::Error::from)
-                    .flatten();
-                if let Err(e) = update_result {
-                    tracing::error!("Failed to update keyframe track params: {:?}", e);
-                    return;
-                }
+            if !change_bindings.is_empty()
+                && let Err(e) = Self::apply_bindings_change(change_bindings)
+            {
+                tracing::error!("Failed to apply keyframe bindings change: {:?}", e);
             }
 
             let update_selected_object_info = crate::EDIT_HANDLE
@@ -292,9 +234,7 @@ impl aviutl2_eframe::eframe::App for KeyframesGui {
     ) {
         ui.request_repaint_after(std::time::Duration::from_millis(100));
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            if crate::SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) {
-                ui.label("Shutting down...");
-            } else if crate::EDIT_HANDLE.is_ready() {
+            if crate::EDIT_HANDLE.is_ready() {
                 if self.is_undo_mode() {
                     self.render_undo_mode_warning(ui);
                 } else if self.timecontrol_editor.is_some() {
@@ -414,7 +354,9 @@ impl KeyframesGui {
                         existing_params,
                         effect_key
                     );
-                    let new_params = *migrations.entry(*params).or_default();
+                    let new_params = *migrations
+                        .entry(*params)
+                        .or_insert_with(|| crate::KeyframeTrackParams::new(info.scene_id));
                     change_bindings.insert(binding.clone(), new_params);
                     if let Some(keyframes) = crate::KEYFRAMES
                         .get(params)
@@ -431,10 +373,69 @@ impl KeyframesGui {
                     );
                     let num_sections = read.get_object_section_num(binding.object)?;
                     let num_keyframes = num_sections + 1;
-                    let new_params = crate::KeyframeTrackParams::new();
+                    let new_params = crate::KeyframeTrackParams::new(info.scene_id);
                     let keyframes = crate::keyframe::Keyframes::new(num_keyframes);
                     crate::KEYFRAMES.insert(new_params, keyframes);
                     change_bindings.insert(binding.clone(), new_params);
+                } else if params.process_nonce != *crate::PROCESS_NONCE {
+                    tracing::info!(
+                        "Keyframe track params {:?} for effect {:?} has different process nonce ({} in object, {} in plugin)",
+                        params,
+                        effect_key,
+                        params.process_nonce,
+                        *crate::PROCESS_NONCE
+                    );
+                    if let Some(keyframe) = crate::KEYFRAMES.get(params).map(|k| k.clone()) {
+                        tracing::info!(
+                            "Migrating keyframe track params {:?} for effect {:?}",
+                            params,
+                            effect_key
+                        );
+                        let new_params = crate::KeyframeTrackParams {
+                            process_nonce: *crate::PROCESS_NONCE,
+                            scene_id: info.scene_id,
+                            ..*params
+                        };
+                        crate::KEYFRAMES.insert(new_params, keyframe);
+                        change_bindings.insert(binding.clone(), new_params);
+                        migrations.insert(*params, new_params);
+                        param_to_effect.insert(*params, effect_key);
+                    } else {
+                        tracing::warn!(
+                            "Keyframe track params {:?} for effect {:?} has different process nonce but no keyframes found in global map, possibly due to copying from another process.",
+                            params,
+                            effect_key
+                        );
+                        let new_params = crate::KeyframeTrackParams {
+                            process_nonce: *crate::PROCESS_NONCE,
+                            scene_id: info.scene_id,
+                            ..*params
+                        };
+                        let num_keyframes = read.get_object_section_num(binding.object)? + 1;
+                        crate::KEYFRAMES
+                            .insert(new_params, crate::keyframe::Keyframes::new(num_keyframes));
+                        change_bindings.insert(binding.clone(), new_params);
+                        migrations.insert(*params, new_params);
+                        param_to_effect.insert(*params, effect_key);
+                    }
+                } else if params.scene_id != info.scene_id {
+                    tracing::info!(
+                        "Keyframe track params {:?} for effect {:?} has different scene id ({} in object, {} in edit info)",
+                        params,
+                        effect_key,
+                        params.scene_id,
+                        info.scene_id
+                    );
+                    let new_params = crate::KeyframeTrackParams {
+                        scene_id: info.scene_id,
+                        ..*params
+                    };
+                    let num_keyframes = read.get_object_section_num(binding.object)? + 1;
+                    crate::KEYFRAMES
+                        .insert(new_params, crate::keyframe::Keyframes::new(num_keyframes));
+                    change_bindings.insert(binding.clone(), new_params);
+                    migrations.insert(*params, new_params);
+                    param_to_effect.insert(*params, effect_key);
                 } else {
                     let num_keyframes = read.get_object_section_num(binding.object)? + 1;
                     match crate::KEYFRAMES.get(params) {
@@ -458,7 +459,9 @@ impl KeyframesGui {
                                 existing_keyframes.keyframes.len(),
                                 num_keyframes
                             );
-                            let new_params = *migrations.entry(*params).or_default();
+                            let new_params = *migrations
+                                .entry(*params)
+                                .or_insert_with(|| crate::KeyframeTrackParams::new(info.scene_id));
                             let mut new_keyframes = existing_keyframes.clone();
                             drop(existing_keyframes);
                             new_keyframes.resize(num_keyframes);
@@ -521,6 +524,66 @@ impl KeyframesGui {
         }
 
         Ok(())
+    }
+
+    fn apply_bindings_change(
+        change_bindings: indexmap::IndexMap<crate::KeyframeBinding, crate::KeyframeTrackParams>,
+    ) -> anyhow::Result<()> {
+        tracing::info!(
+            "Updating keyframe track params for {} bindings",
+            change_bindings.len()
+        );
+        crate::EDIT_HANDLE
+        .call_edit_section(|edit| {
+            let mut resolved_migrations = RESOLVED_MIGRATIONS.lock().unwrap();
+            for (binding, new_params) in change_bindings {
+                tracing::info!(
+                    "Updating keyframe track params for object {:?}, effect {:?} (index {}), track {:?} to {:?}",
+                    binding.object,
+                    binding.effect_name,
+                    binding.effect_index,
+                    binding.track_name,
+                    new_params
+                );
+                let mut track = edit.get_object_effect_item(
+                    binding.object,
+                    &binding.effect_name,
+                    binding.effect_index,
+                    &binding.track_name,
+                )?;
+                tracing::debug!(
+                    "Current keyframe track params for object {:?}, effect {:?} (index {}), track {:?}: {:?}",
+                    binding.object,
+                    binding.effect_name,
+                    binding.effect_index,
+                    binding.track_name,
+                    &track
+                );
+                let previous_params = crate::KeyframeTrackParams::parse(&track);
+                if let Some(previous_params) = previous_params && previous_params.bank_id != 0 {
+                    resolved_migrations.insert(previous_params);
+                }
+                new_params.set_params(&mut track)?;
+                edit.set_object_effect_item(
+                    binding.object,
+                    &binding.effect_name,
+                    binding.effect_index,
+                    &binding.track_name,
+                    &track,
+                )?;
+                tracing::debug!(
+                    "Updated keyframe track params for object {:?}, effect {:?} (index {}), track {:?} to {:?}",
+                    binding.object,
+                    binding.effect_name,
+                    binding.effect_index,
+                    binding.track_name,
+                    &track
+                );
+            }
+            anyhow::Ok(())
+        })
+        .map_err(anyhow::Error::from)
+        .flatten()
     }
 
     fn update_selected_object_info(

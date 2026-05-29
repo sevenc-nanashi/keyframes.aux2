@@ -343,10 +343,10 @@ impl KeyframesGui {
             effect.name,
             &new_keyframes
         );
-        let new_params = crate::KeyframeTrackParams::new();
-        crate::KEYFRAMES.insert(new_params, new_keyframes);
-        let edit_result = crate::EDIT_HANDLE
+        let new_params = crate::EDIT_HANDLE
             .call_edit_section(|edit| {
+                let new_params = crate::KeyframeTrackParams::new(edit.info.scene_id);
+                crate::KEYFRAMES.insert(new_params, new_keyframes);
                 for name in &track.names {
                     let mut before = edit.get_object_effect_item(
                         object.handle,
@@ -363,12 +363,12 @@ impl KeyframesGui {
                         &before,
                     )?;
                 }
-                anyhow::Ok(())
+                anyhow::Ok(new_params)
             })
             .map_err(anyhow::Error::from)
             .flatten();
-        match edit_result {
-            Ok(()) => {
+        match new_params {
+            Ok(new_params) => {
                 tracing::info!(
                     "Updated keyframe track params for section {} of track {:?} in effect {:?} to {:?}",
                     section_index,
@@ -528,7 +528,7 @@ impl KeyframesGui {
     ) {
         let res = crate::EDIT_HANDLE
             .call_edit_section(|edit| {
-                let new_params = crate::KeyframeTrackParams::new();
+                let new_params = crate::KeyframeTrackParams::new(edit.info.scene_id);
                 if let Some(keyframes) = crate::KEYFRAMES
                     .get(params)
                     .map(|keyframes| keyframes.clone())
