@@ -110,6 +110,16 @@ impl KeyframesGui {
                 ui.close();
             }
         });
+        if response.double_clicked()
+            && let Some(pointer_pos) = response.interact_pointer_pos()
+            && !Self::is_timecontrol_anchor_near_pointer(timecontrol, viewport, pointer_pos)
+            && let Some(position) =
+                Self::timecontrol_curve_position_near_pointer(timecontrol, viewport, pointer_pos)
+        {
+            *selected_point = Self::insert_timecontrol_point(timecontrol, position);
+            changed = true;
+            commit_requested = true;
+        }
 
         Self::draw_timecontrol_grid(&painter, response.rect, viewport);
         Self::draw_timecontrol_curve(&painter, timecontrol, viewport, false);
@@ -232,6 +242,58 @@ impl KeyframesGui {
             max_y = max_y.max(segment_max_y);
         }
         (min_y, max_y)
+    }
+
+    pub fn timecontrol_curve_position_near_pointer(
+        timecontrol: &crate::keyframe::TimeControl,
+        viewport: TimeControlViewport,
+        pointer_pos: egui::Pos2,
+    ) -> Option<[f64; 2]> {
+        const HIT_DISTANCE: f32 = 8.0;
+
+        let points = timecontrol.curve_sampled_points(192);
+        let mut nearest = None;
+        for points in points.windows(2) {
+            let start = viewport.graph_to_screen(points[0]);
+            let end = viewport.graph_to_screen(points[1]);
+            let nearest_pos = Self::nearest_pos_on_screen_segment(pointer_pos, start, end);
+            let distance = pointer_pos.distance(nearest_pos);
+            if distance <= HIT_DISTANCE
+                && nearest.is_none_or(|(_, nearest_distance): (egui::Pos2, f32)| {
+                    distance < nearest_distance
+                })
+            {
+                nearest = Some((nearest_pos, distance));
+            }
+        }
+
+        nearest.map(|(pos, _)| viewport.screen_to_graph(pos))
+    }
+
+    pub fn is_timecontrol_anchor_near_pointer(
+        timecontrol: &crate::keyframe::TimeControl,
+        viewport: TimeControlViewport,
+        pointer_pos: egui::Pos2,
+    ) -> bool {
+        timecontrol
+            .points
+            .iter()
+            .any(|point| pointer_pos.distance(viewport.graph_to_screen(point.position)) <= 9.0)
+    }
+
+    pub fn nearest_pos_on_screen_segment(
+        point: egui::Pos2,
+        start: egui::Pos2,
+        end: egui::Pos2,
+    ) -> egui::Pos2 {
+        let segment = end - start;
+        let segment_length_sq = segment.length_sq();
+        if segment_length_sq <= f32::EPSILON {
+            return start;
+        }
+
+        let t = ((point - start).dot(segment) / segment_length_sq).clamp(0.0, 1.0);
+        start + segment * t
     }
 
     pub fn timecontrol_vertical_bounds(timecontrol: &crate::keyframe::TimeControl) -> (f64, f64) {
