@@ -252,6 +252,29 @@ impl aviutl2_eframe::eframe::App for KeyframesGui {
 }
 
 impl KeyframesGui {
+    pub fn update_keyframes_for_tracks(
+        object: aviutl2::generic::ObjectHandle,
+        effect_name: &str,
+        effect_index: usize,
+        track_names: &[String],
+        new_keyframes: crate::keyframe::Keyframes,
+    ) -> anyhow::Result<crate::KeyframeTrackParams> {
+        crate::EDIT_HANDLE
+            .call_edit_section(|edit| {
+                let new_params = crate::KeyframeTrackParams::new(edit.info.scene_id);
+                crate::KEYFRAMES.insert(new_params, new_keyframes);
+                for name in track_names {
+                    let mut before =
+                        edit.get_object_effect_item(object, effect_name, effect_index, name)?;
+                    new_params.set_params(&mut before)?;
+                    edit.set_object_effect_item(object, effect_name, effect_index, name, &before)?;
+                }
+                anyhow::Ok(new_params)
+            })
+            .map_err(anyhow::Error::from)
+            .flatten()
+    }
+
     fn is_undo_mode(&self) -> bool {
         let Some(selected_object_info) = &self.selected_object_info else {
             return false;

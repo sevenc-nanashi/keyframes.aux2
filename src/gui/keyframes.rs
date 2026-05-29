@@ -343,30 +343,13 @@ impl KeyframesGui {
             effect.name,
             &new_keyframes
         );
-        let new_params = crate::EDIT_HANDLE
-            .call_edit_section(|edit| {
-                let new_params = crate::KeyframeTrackParams::new(edit.info.scene_id);
-                crate::KEYFRAMES.insert(new_params, new_keyframes);
-                for name in &track.names {
-                    let mut before = edit.get_object_effect_item(
-                        object.handle,
-                        &effect.name,
-                        effect.index,
-                        name,
-                    )?;
-                    new_params.set_params(&mut before)?;
-                    edit.set_object_effect_item(
-                        object.handle,
-                        &effect.name,
-                        effect.index,
-                        name,
-                        &before,
-                    )?;
-                }
-                anyhow::Ok(new_params)
-            })
-            .map_err(anyhow::Error::from)
-            .flatten();
+        let new_params = Self::update_keyframes_for_tracks(
+            object.handle,
+            &effect.name,
+            effect.index,
+            &track.names,
+            new_keyframes,
+        );
         match new_params {
             Ok(new_params) => {
                 tracing::info!(
