@@ -463,13 +463,13 @@ impl KeyframesGui {
                     let keyframes = crate::keyframe::Keyframes::new(num_keyframes);
                     crate::KEYFRAMES.insert(new_params, keyframes);
                     change_bindings.insert(binding.clone(), new_params);
-                } else if params.process_nonce != *crate::PROCESS_NONCE {
+                } else if params.project_session_nonce != crate::current_project_session_nonce() {
                     tracing::info!(
-                        "Keyframe track params {:?} for effect {:?} has different process nonce ({} in object, {} in plugin)",
+                        "Keyframe track params {:?} for effect {:?} has different project session nonce ({} in object, {} in plugin)",
                         params,
                         effect_key,
-                        params.process_nonce,
-                        *crate::PROCESS_NONCE
+                        params.project_session_nonce,
+                        crate::current_project_session_nonce()
                     );
                     if let Some(keyframe) = crate::KEYFRAMES.get(params).map(|k| k.clone()) {
                         tracing::info!(
@@ -478,7 +478,7 @@ impl KeyframesGui {
                             effect_key
                         );
                         let new_params = crate::KeyframeTrackParams {
-                            process_nonce: *crate::PROCESS_NONCE,
+                            project_session_nonce: crate::current_project_session_nonce(),
                             scene_id: info.scene_id,
                             ..*params
                         };
@@ -488,12 +488,12 @@ impl KeyframesGui {
                         param_to_effect.insert(*params, effect_key);
                     } else {
                         tracing::warn!(
-                            "Keyframe track params {:?} for effect {:?} has different process nonce but no keyframes found in global map, possibly due to copying from another process.",
+                            "Keyframe track params {:?} for effect {:?} has different project session nonce but no keyframes found in global map, possibly due to copying from another project session.",
                             params,
                             effect_key
                         );
                         let new_params = crate::KeyframeTrackParams {
-                            process_nonce: *crate::PROCESS_NONCE,
+                            project_session_nonce: crate::current_project_session_nonce(),
                             scene_id: info.scene_id,
                             ..*params
                         };

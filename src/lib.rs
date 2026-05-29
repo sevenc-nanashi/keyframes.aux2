@@ -42,14 +42,27 @@ pub static CURRENT_SCENE_USAGE: std::sync::LazyLock<std::sync::Mutex<CurrentScen
             params: vec![],
         })
     });
-pub static PROCESS_NONCE: std::sync::LazyLock<usize> =
-    std::sync::LazyLock::new(|| rand::random_range(1..32768));
+pub static PROJECT_SESSION_NONCE: std::sync::LazyLock<std::sync::Mutex<usize>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(new_project_session_nonce()));
+
+fn new_project_session_nonce() -> usize {
+    rand::random_range(1..32768)
+}
+
+pub fn current_project_session_nonce() -> usize {
+    *PROJECT_SESSION_NONCE.lock().unwrap()
+}
+
+fn refresh_project_session_nonce() {
+    *PROJECT_SESSION_NONCE.lock().unwrap() = new_project_session_nonce();
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct KeyframeTrackParams {
     pub bank_id: usize,
     pub keyframes_id: usize,
     pub scene_id: i32,
-    pub process_nonce: usize,
+    pub project_session_nonce: usize,
 }
 
 impl KeyframeTrackParams {
@@ -60,7 +73,7 @@ impl KeyframeTrackParams {
             bank_id: *current_bank_id,
             keyframes_id: *current_keyframes_id,
             scene_id,
-            process_nonce: *PROCESS_NONCE,
+            project_session_nonce: current_project_session_nonce(),
         };
         *current_keyframes_id += 1;
         params
@@ -78,18 +91,22 @@ pub struct KeyframeBinding {
 impl KeyframeTrackParams {
     pub fn parse(alias: &str) -> Option<Self> {
         static KEYFRAME_PATTERN: lazy_regex::Lazy<lazy_regex::regex::Regex> = lazy_regex::lazy_regex!(
-            r",keyframes\.aux2,\d+\|(?<bank_id>\d+),(?<keyframes_id>\d+),(?<scene_id>\d+),(?<process_nonce>\d+)(?:$|\|)"
+            r",keyframes\.aux2,\d+\|(?<bank_id>\d+),(?<keyframes_id>\d+),(?<scene_id>\d+),(?<project_session_nonce>\d+)(?:$|\|)"
         );
         let captures = KEYFRAME_PATTERN.captures(alias)?;
         let bank_id: usize = captures.name("bank_id")?.as_str().parse().ok()?;
         let keyframes_id: usize = captures.name("keyframes_id")?.as_str().parse().ok()?;
         let scene_id: i32 = captures.name("scene_id")?.as_str().parse().ok()?;
-        let process_nonce: usize = captures.name("process_nonce")?.as_str().parse().ok()?;
+        let project_session_nonce: usize = captures
+            .name("project_session_nonce")?
+            .as_str()
+            .parse()
+            .ok()?;
         Some(Self {
             bank_id,
             keyframes_id,
             scene_id,
-            process_nonce,
+            project_session_nonce,
         })
     }
     pub fn set_params(&self, track: &mut String) -> anyhow::Result<()> {
@@ -98,7 +115,12 @@ impl KeyframeTrackParams {
         if STATIC_VALUE_PATTERN.is_match(track) {
             track.replace_with(&format!(
                 "{},{},keyframes.aux2,0|{},{},{},{}",
-                track, track, self.bank_id, self.keyframes_id, self.scene_id, self.process_nonce
+                track,
+                track,
+                self.bank_id,
+                self.keyframes_id,
+                self.scene_id,
+                self.project_session_nonce
             ));
             return Ok(());
         }
@@ -115,7 +137,7 @@ impl KeyframeTrackParams {
             self.bank_id,
             self.keyframes_id,
             self.scene_id,
-            self.process_nonce,
+            self.project_session_nonce,
             if let Some(params) = rest.as_str().strip_prefix('|') {
                 if let Some((_old_params, expr)) = params.split_once('|') {
                     format!("|{expr}")
@@ -183,6 +205,7 @@ impl aviutl2::generic::GenericPlugin for KeyframesAux2 {
     }
 
     fn on_project_load(&mut self, project: &mut aviutl2::generic::ProjectFile) {
+        refresh_project_session_nonce();
         if EFFECTS.is_empty() {
             match load_effects() {
                 Ok(_) => {
@@ -462,7 +485,7 @@ mod tests {
         assert_eq!(params.bank_id, 1);
         assert_eq!(params.keyframes_id, 2);
         assert_eq!(params.scene_id, 3);
-        assert_eq!(params.process_nonce, 4);
+        assert_eq!(params.project_session_nonce, 4);
     }
 
     #[test]
@@ -472,7 +495,7 @@ mod tests {
             bank_id: 1,
             keyframes_id: 2,
             scene_id: 3,
-            process_nonce: 4,
+            project_session_nonce: 4,
         };
         params.set_params(&mut track).unwrap();
         assert_eq!(track, "0.5,0.5,keyframes.aux2,0|1,2,3,4");
@@ -485,7 +508,7 @@ mod tests {
             bank_id: 1,
             keyframes_id: 2,
             scene_id: 3,
-            process_nonce: 4,
+            project_session_nonce: 4,
         };
         params.set_params(&mut track).unwrap();
         assert_eq!(track, "0,0,keyframes.aux2,8|1,2,3,4|test");
@@ -498,7 +521,7 @@ mod tests {
             bank_id: 1,
             keyframes_id: 2,
             scene_id: 3,
-            process_nonce: 4,
+            project_session_nonce: 4,
         };
         params.set_params(&mut track).unwrap();
         assert_eq!(track, "0,0,keyframes.aux2,8|1,2,3,4|test");

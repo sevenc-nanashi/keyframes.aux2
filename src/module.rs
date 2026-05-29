@@ -27,7 +27,7 @@ impl KeyframesMod2 {
         bank_id: i32,
         track_id: i32,
         scene_id: i32,
-        process_nonce: i32,
+        project_session_nonce: i32,
         index: usize,
     ) -> aviutl2::common::AnyResult<(
         Vec<i32>,
@@ -43,11 +43,11 @@ impl KeyframesMod2 {
             bank_id: bank_id as _,
             keyframes_id: track_id as _,
             scene_id: scene_id as _,
-            process_nonce: process_nonce as _,
+            project_session_nonce: project_session_nonce as _,
         };
         let keyframes = crate::KEYFRAMES.get(&param).with_context(|| {
             format!(
-                "keyframes not found for bank_id: {bank_id}, track_id: {track_id}, scene_id: {scene_id}, process_nonce: {process_nonce}"
+                "keyframes not found for bank_id: {bank_id}, track_id: {track_id}, scene_id: {scene_id}, project_session_nonce: {project_session_nonce}"
             )
         })?;
         let (index, keyframe) = keyframes
@@ -103,7 +103,7 @@ impl KeyframesMod2 {
         bank_id: i32,
         track_id: i32,
         scene_id: i32,
-        process_nonce: i32,
+        project_session_nonce: i32,
         index: usize,
         x: f64,
     ) -> aviutl2::common::AnyResult<f64> {
@@ -111,7 +111,7 @@ impl KeyframesMod2 {
             bank_id: bank_id as _,
             keyframes_id: track_id as _,
             scene_id: scene_id as _,
-            process_nonce: process_nonce as _,
+            project_session_nonce: project_session_nonce as _,
         };
         let keyframes = crate::KEYFRAMES
             .get(&param)

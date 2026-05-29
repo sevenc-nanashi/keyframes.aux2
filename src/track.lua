@@ -1,11 +1,11 @@
 --param:Bank ID (Do not edit these parameters),0
 --param:Keyframe ID,0
 --param:Scene ID,0
---param:Process Nonce,0
+--param:Project Session Nonce,0
 
 local mod = obj.module("keyframes.aux2")
 local ffi = require("ffi")
-local bank_id, keyframe_id, scene_id, process_nonce = obj.getpoint("param")
+local bank_id, keyframe_id, scene_id, project_session_nonce = obj.getpoint("param")
 local index, ratio = math.modf(obj.getpoint("index"))
 local inspect = mod.debug_mode()
 
@@ -20,7 +20,7 @@ if bank_id == 0 then
 end
 
 local indices, script_name, script_ptr, script_len, script_dir, accelerate, decelerate, params = mod.get_keyframe(
-  bank_id, keyframe_id, scene_id, process_nonce, index)
+  bank_id, keyframe_id, scene_id, project_session_nonce, index)
 
 local inner_G = {}
 local inner_obj = {}
@@ -79,7 +79,7 @@ inner_obj.getpoint = function(...)
     local left_time = obj.getpoint("time", indices[1])
     local right_time = obj.getpoint("time", indices[#indices])
     ratio = target_time / (right_time - left_time)
-    local value = mod.get_timecontrol_value(bank_id, keyframe_id, scene_id, process_nonce, index, ratio)
+    local value = mod.get_timecontrol_value(bank_id, keyframe_id, scene_id, project_session_nonce, index, ratio)
     if option == "value" then
       return value
     end
